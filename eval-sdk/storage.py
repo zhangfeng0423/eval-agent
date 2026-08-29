@@ -62,8 +62,8 @@ class ReportGenerator:
             "",
             f"**Total Cases Evaluated**: {len(summaries)}",
             "",
-            "| Case ID | Task Type | Run Status | Accuracy Score | Quality Score | CSV Match Ratio | Verdict | Time (s) |",
-            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+            "| Case ID | Task Type | Run Status | Accuracy Score | Quality Score | CSV Match Ratio | Verdict | Time (s) | Tokens | Cache Hit | Cost (USD) |",
+            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | ---: | :--- | ---: |"
         ]
 
         for s in summaries:
@@ -71,9 +71,20 @@ class ReportGenerator:
             acc_sc = f"{s.accuracy_result.overall_score:.1f}" if s.accuracy_result else "N/A"
             qua_sc = f"{s.quality_result.overall_score:.1f}" if s.quality_result else "N/A"
             csv_rt = f"{s.csv_diff_result.matched_ratio * 100:.1f}%" if s.csv_diff_result else "N/A"
+            trace = s.trace_metrics
+            cost = trace.total_cost_usd if trace else 0.0
+            tokens = trace.total_tokens if trace else 0
+            cache_hit = trace.cache_hit_input_tokens if trace else 0
+            cache_miss = trace.cache_miss_input_tokens if trace else 0
+            cache_rate = trace.cache_hit_rate if trace else None
+            cache_summary = (
+                f"{cache_hit}/{cache_hit + cache_miss} ({cache_rate:.1%})"
+                if cache_rate is not None
+                else "N/A"
+            )
             verdict_badge = "🟢 PASS" if s.overall_verdict == "PASS" else "🔴 FAIL"
             lines.append(
-                f"| `{s.case_id}` | {s.task_type} | `{run_st}` | {acc_sc} | {qua_sc} | {csv_rt} | {verdict_badge} | {s.total_elapsed_seconds:.1f}s |"
+                f"| `{s.case_id}` | {s.task_type} | `{run_st}` | {acc_sc} | {qua_sc} | {csv_rt} | {verdict_badge} | {s.total_elapsed_seconds:.1f}s | {tokens} | {cache_summary} | ${cost:.6f} |"
             )
 
         lines.extend([
@@ -112,6 +123,16 @@ class ReportGenerator:
             badge_class = "pass" if s.overall_verdict == "PASS" else "fail"
             acc_score = s.accuracy_result.overall_score if s.accuracy_result else 0
             qua_score = s.quality_result.overall_score if s.quality_result else 0
+            trace = s.trace_metrics
+            token_count = trace.total_tokens if trace else 0
+            cost_usd = trace.total_cost_usd if trace else 0.0
+            cache_summary = (
+                f"{trace.cache_hit_input_tokens:,} / "
+                f"{trace.cache_hit_input_tokens + trace.cache_miss_input_tokens:,} "
+                f"({trace.cache_hit_rate:.1%})"
+                if trace and trace.cache_hit_rate is not None
+                else "N/A"
+            )
 
             cards_html.append(f"""
             <div class="case-card {badge_class}">
@@ -124,6 +145,9 @@ class ReportGenerator:
                     <div class="metric"><span class="label">Accuracy:</span> <b>{acc_score:.1f}</b></div>
                     <div class="metric"><span class="label">Quality:</span> <b>{qua_score:.1f}</b></div>
                     <div class="metric"><span class="label">Elapsed:</span> <b>{s.total_elapsed_seconds:.1f}s</b></div>
+                    <div class="metric"><span class="label">Tokens:</span> <b>{token_count}</b></div>
+                    <div class="metric"><span class="label">Cache Hit:</span> <b>{cache_summary}</b></div>
+                    <div class="metric"><span class="label">Cost:</span> <b>${cost_usd:.6f}</b></div>
                 </div>
             </div>
             """)

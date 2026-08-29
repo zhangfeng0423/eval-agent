@@ -1,5 +1,6 @@
 # Eval-Agent SDK Core Dependencies
-claude-agent-sdk>=0.1.0
+# 0.2.148+ bundles the Claude Code CLI; no separate claude installation is required.
+claude-agent-sdk>=0.2.148
 pydantic>=2.0.0
 fastapi>=0.100.0
 uvicorn>=0.23.0

@@ -32,7 +32,8 @@ def parse_args():
     parser.add_argument("--concurrency", "-c", type=int, default=5, help="Maximum concurrent cases (default: 5)")
     parser.add_argument("--sandbox", "-s", type=str, default="utm", choices=["utm", "orbstack", "local"], help="Sandbox isolation provider")
     parser.add_argument("--work-dir", "-w", type=str, default=os.getcwd(), help="Root directory of cases and evaluation data")
-    parser.add_argument("--no-repair", action="store_true", help="Disable automatic repair and patch verification")
+    parser.add_argument("--no-repair", action="store_true", help="Disable repair and patch verification")
+    parser.add_argument("--allow-automatic-repair", action="store_true", help="Allow batch runs to apply patches without per-case HITL approval")
     parser.add_argument("--model", "-m", type=str, default=None, help="LLM model name override (e.g. claude-3-7-sonnet, deepseek-v4-flash)")
     return parser.parse_args()
 
@@ -82,6 +83,7 @@ async def async_main():
     sandbox_type = args.sandbox if args.sandbox != "utm" else sandbox_cfg.get("type", "utm")
     model_name = args.model or llm_cfg.get("default_model")
     enable_repair = not args.no_repair if args.no_repair else pipeline_cfg.get("enable_auto_repair", True)
+    allow_automatic_repair = args.allow_automatic_repair or pipeline_cfg.get("allow_automatic_repair", False)
 
     # Collect case list
     if args.cases:
@@ -111,6 +113,7 @@ async def async_main():
         sandbox=sandbox,
         max_concurrency=concurrency,
         enable_auto_repair=enable_repair,
+        allow_automatic_repair=allow_automatic_repair,
         model_name=model_name
     )
 

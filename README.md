@@ -57,11 +57,18 @@
 
 ### 4. 📊 零依赖全链路可观测性大屏 (Embedded Observability & Trace Waterfall)
 * **0 额外部署、100% 离线内网安全**：无需启动外部 Docker/Postgres，随控制台一同启动；
-* **官方 100% 精确计量**：直接提取 API 响应体的 Token Usage 与单价，精确计算到 $0.00001；
+* **缓存感知的 Token 追踪**：记录总输入、未命中输入、缓存命中、缓存写入、命中率、输出 Token 和每阶段成本；
+* **成本口径透明**：优先使用 SDK 返回的 `costUSD` / `total_cost_usd`，缺失时使用本地模型价格估算，并明确区分估算值与供应商真实账单；
 * **标准 OTel 协议**：底层遵循 OpenTelemetry 规范，支持一键无缝推送到企业集中式 Langfuse / Jaeger。
 
 ### 5. 💾 专家校准与 DPO 微调数据飞轮 (Data Flywheel)
 * 人类专家的每一次评分校准与纠错备注，自动持久化沉淀入 `eval/expert_dataset.jsonl`，直接用于自研大模型的 DPO / RLHF 微调对齐。
+
+### 6. 📦 SDK 自带 CLI 与安全修复边界
+* `claude-agent-sdk>=0.2.148` 自带 Claude Code CLI，默认不要求用户另外安装 `claude` 命令；只有设置 `CLAUDE_CLI_PATH` 时才使用显式指定的 CLI；
+* 批处理自动修复默认关闭，只有同时开启配置和 `--allow-automatic-repair` 才会执行；HITL 修复还需要人工复核记录和请求体中的明确授权；
+* 修复 Agent 的补丁工具限制在当前用例源码目录内，避免通过 `target_dir` 修改评测仓库或其他本地工作树；
+* 服务端默认监听 `127.0.0.1`，适合本机 HITL 使用。若需要局域网或生产部署，应在反向代理或应用层补充身份认证与 CSRF 防护。
 
 ---
 
@@ -85,19 +92,81 @@ python -m eval_sdk.cli serve --port 8000
 ```
 打开浏览器访问 [http://localhost:8000](http://localhost:8000) 即可体验！
 
+### CLI 评测示例
+```bash
+# 使用 eval_config.yaml 中的默认模型和沙箱运行指定用例
+python -m eval_sdk.cli 79 --work-dir /path/to/eval-agent
+
+# 临时覆盖模型、沙箱和并发数
+python -m eval_sdk.cli 79 127 --model deepseek-v4-flash --sandbox local --concurrency 2
+
+# 仅关闭修复能力；默认不会在批处理中自动应用补丁
+python -m eval_sdk.cli 79 --no-repair
+
+# 明确允许批处理自动修复（有代码修改风险，默认不要开启）
+python -m eval_sdk.cli 79 --allow-automatic-repair
+```
+
+### API Key 与模型配置
+在项目根目录创建 `.env`（不要提交真实密钥）：
+
+```dotenv
+ANTHROPIC_API_KEY=your-api-key
+ANTHROPIC_BASE_URL=https://your-compatible-endpoint.example.com
+# 可选：仅在需要覆盖 SDK 内置 CLI 时设置
+# CLAUDE_CLI_PATH=/absolute/path/to/claude
+```
+
+模型默认值和沙箱类型可以在 `eval_config.yaml` 中配置。CLI 参数优先级高于配置文件。
+
+---
+
+## 📈 缓存指标与成本口径
+
+每个用例会在 `trace_metrics.json` 中保存以下指标：
+
+| 字段 | 含义 |
+| --- | --- |
+| `total_input_tokens` | 总输入 Token；Claude SDK 场景包含普通输入、缓存读取和缓存写入桶 |
+| `cache_hit_input_tokens` | 缓存读取命中的输入 Token |
+| `cache_miss_input_tokens` | 未命中的输入 Token；缓存写入按未命中输入计入统计 |
+| `cache_creation_input_tokens` | 缓存写入 Token |
+| `cache_hit_rate` | `cache_hit_input_tokens / (cache_hit_input_tokens + cache_miss_input_tokens)` |
+| `total_cost_usd` | 各阶段成本之和；优先使用 SDK 报告成本，缺失时按本地价格表估算 |
+
+DeepSeek 兼容接口常见的 `prompt_tokens`、`prompt_cache_hit_tokens`、`prompt_cache_miss_tokens` 与 Claude SDK 的 `inputTokens`、`cacheReadInputTokens`、`cacheCreationInputTokens` 采用不同统计语义，编排器会分别解析，避免重复计算或截断大缓存值。
+
+需要注意：SDK 的 `costUSD` 是 SDK/CLI 的计价结果，不等同于 DeepSeek 供应商后台的最终账单。要核对真实账单，应以供应商账单或用量接口为准。
+
+---
+
+## 🧪 测试与提交前检查
+
+```bash
+# 语法检查
+python -m py_compile eval-sdk/orchestrator.py eval-sdk/server.py eval-sdk/storage.py
+
+# 运行全部 SDK 单元测试
+python -m unittest discover -s eval-sdk/tests -v
+
+# 检查补丁空白错误
+git diff --check
+```
+
 ---
 
 ## 📁 核心模块目录结构
 
 ```text
 eval-sdk/
-├── models.py         # Pydantic 强类型校验、5-Tier Grade 体系、TraceSpan 数据模型
+├── models.py         # Pydantic 强类型校验、5-Tier Grade 体系、TraceSpan/TraceMetrics 数据模型
 ├── guardrails.py     # AST/Manifest 坏依赖解析器 + 线上官方 Registry 动态校验
 ├── sandbox.py        # UTM VM / OrbStack / Local 统一沙箱抽象
 ├── mcp_tools.py      # 标准 Claude Agent SDK MCP 协议工具集
 ├── agents.py         # 专职 Subagents（准确性、四大支柱质量、自愈、学习）
-├── orchestrator.py   # 异步信号量并发调度器 + 双盲隔离机制
+├── orchestrator.py   # 异步信号量并发调度器 + 双盲隔离机制 + 缓存/成本追踪
 ├── server.py         # FastAPI HITL 交互复核、模型竞技场与可观测性控制台
+├── storage.py        # 原子化 JSON 存储与 Markdown/HTML 报告生成
 ├── seed.py           # 全场景 Demo 种子数据生成器
 ├── cli.py            # 统一 CLI 命令行入口
 └── skills/           # 注入大模型裁判心智的 SOP 指导文件

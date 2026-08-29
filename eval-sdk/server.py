@@ -14,18 +14,22 @@ try:
     from .models import (
         CaseEvalSummary, RunResult, AccuracyResult, QualityResult,
         CsvDiffResult, HumanCalibrationRequest, HumanReviewEntry,
-        TraceMetrics, TraceSpan, calculate_llm_cost
+        PatchVerificationResult, RepairAuthorizationRequest, TraceMetrics
     )
     from .storage import AtomicJsonStorage
     from .sandbox import create_sandbox
+    from .orchestrator import EvalOrchestrator
+    from .cli import load_yaml_config
 except (ImportError, ValueError):
     from models import (
         CaseEvalSummary, RunResult, AccuracyResult, QualityResult,
         CsvDiffResult, HumanCalibrationRequest, HumanReviewEntry,
-        TraceMetrics, TraceSpan, calculate_llm_cost
+        PatchVerificationResult, RepairAuthorizationRequest, TraceMetrics
     )
     from storage import AtomicJsonStorage
     from sandbox import create_sandbox
+    from orchestrator import EvalOrchestrator
+    from cli import load_yaml_config
 
 logger = logging.getLogger("eval-server")
 
@@ -38,7 +42,133 @@ WORK_DIR = Path(os.getcwd())
 DATASET_EXPORT_FILE = WORK_DIR / "eval" / "expert_dataset.jsonl"
 
 
+def _quality_pillars(quality: Optional[dict]) -> dict:
+    """Aggregate quality dimensions into the four engineering pillars."""
+    buckets = {
+        "architecture": [],
+        "robustness": [],
+        "security": [],
+        "deliverability": [],
+    }
+    for dimension in (quality or {}).get("dimensions") or []:
+        if not isinstance(dimension, dict):
+            continue
+        name = str(dimension.get("name") or dimension.get("dimension") or "").lower()
+        try:
+            score = float(dimension.get("score"))
+        except (TypeError, ValueError):
+            continue
+        if any(term in name for term in ("架构", "规范", "模块", "architecture", "modular")):
+            buckets["architecture"].append(score)
+        elif any(term in name for term in ("健壮", "韧性", "异常", "稳定", "robust", "resilien")):
+            buckets["robustness"].append(score)
+        elif any(term in name for term in ("性能", "安全", "performance", "security")):
+            buckets["security"].append(score)
+        elif any(term in name for term in ("交付", "可观测", "运维", "体验", "deliver", "observ")):
+            buckets["deliverability"].append(score)
+    return {
+        key: round(sum(values) / len(values), 2) if values else None
+        for key, values in buckets.items()
+    }
+
+
 def get_arena_benchmark_data() -> dict:
+    """Return metrics aggregated from persisted evaluation cases."""
+    cases = get_all_cases()
+    grouped: dict[str, list[dict]] = {}
+    for case in cases:
+        model_name = (case.get("trace") or {}).get("model_name") or "unknown"
+        if model_name == "unknown":
+            continue
+        grouped.setdefault(model_name, []).append(case)
+
+    models = []
+    for model_name, model_cases in grouped.items():
+        acc_scores = [
+            case["accuracy"]["overall_score"] for case in model_cases
+            if case.get("accuracy") and case["accuracy"].get("status") == "success"
+        ]
+        quality_scores = [
+            case["quality"]["overall_score"] for case in model_cases
+            if case.get("quality") and case["quality"].get("status") == "success"
+        ]
+        scores = acc_scores + quality_scores
+        runs = [case["run"] for case in model_cases if case.get("run")]
+        patches = [case["patch"] for case in model_cases if case.get("patch")]
+        traces = [case["trace"] for case in model_cases if case.get("trace")]
+        pillar_values = {key: [] for key in ("architecture", "robustness", "security", "deliverability")}
+        for case in model_cases:
+            for key, value in _quality_pillars(case.get("quality")).items():
+                if value is not None:
+                    pillar_values[key].append(value)
+        pillars = {
+            key: round(sum(values) / len(values), 2) if values else None
+            for key, values in pillar_values.items()
+        }
+        overall = round(sum(scores) / len(scores), 2) if scores else None
+        models.append({
+            "name": model_name,
+            "tag": "当前评测结果",
+            "overall_grade": max(1, min(5, int(overall // 20))) if overall is not None else None,
+            "overall_score": overall,
+            "accuracy_score": round(sum(acc_scores) / len(acc_scores), 2) if acc_scores else None,
+            "quality_score": round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else None,
+            "pillars": pillars,
+            "sandbox_pass_rate": f"{sum(r.get('status') == 'success' for r in runs) / len(runs) * 100:.1f}%" if runs else "N/A",
+            "healing_success_rate": f"{sum(p.get('run_after_patch_passed') is True for p in patches) / len(patches) * 100:.1f}%" if patches else "N/A",
+            "avg_latency": f"{sum(t.get('total_elapsed_seconds', 0.0) for t in traces) / len(traces):.1f}s" if traces else "N/A",
+            "avg_cost_usd": round(sum(t.get('total_cost_usd', 0.0) for t in traces) / len(traces), 6) if traces else None,
+            "roi_index": None,
+            "recommendation": f"基于 {len(model_cases)} 个已持久化用例的真实评测结果。",
+            "case_count": len(model_cases),
+        })
+    models.sort(key=lambda item: item["overall_score"] or 0.0, reverse=True)
+    efficiencies = [
+        model["overall_score"] / model["avg_cost_usd"]
+        for model in models
+        if model["overall_score"] is not None
+        and model["avg_cost_usd"] is not None
+        and model["avg_cost_usd"] > 0
+    ]
+    max_efficiency = max(efficiencies, default=0.0)
+    for rank, model in enumerate(models, start=1):
+        model["rank"] = rank
+        if (
+            model["overall_score"] is not None
+            and model["avg_cost_usd"] is not None
+            and model["avg_cost_usd"] > 0
+            and max_efficiency > 0
+        ):
+            model["roi_index"] = round(
+                model["overall_score"] / model["avg_cost_usd"] / max_efficiency * 100
+            )
+    return {"benchmark_dataset_size": len(cases), "models": models}
+
+
+def _create_configured_sandbox(config: dict):
+    """Create the configured isolated sandbox using only supported provider options."""
+    sandbox_config = config.get("sandbox", {})
+    sandbox_type = sandbox_config.get("type", "utm")
+    if sandbox_type == "utm":
+        settings = sandbox_config.get("utm", {})
+        sandbox_kwargs = {
+            key: settings[key]
+            for key in ("host", "port", "user", "ssh_key_path")
+            if key in settings and settings[key] is not None
+        }
+    elif sandbox_type == "orbstack":
+        settings = sandbox_config.get("orbstack", {})
+        sandbox_kwargs = {
+            key: settings[key]
+            for key in ("machine_name",)
+            if key in settings and settings[key] is not None
+        }
+    else:
+        sandbox_kwargs = {}
+    return create_sandbox(sandbox_type, **sandbox_kwargs)
+
+
+def _legacy_demo_arena_data() -> dict:
     """Returns standardized cross-model benchmark data across the 4 engineering pillars and costs."""
     return {
         "benchmark_dataset_size": 100,
@@ -138,82 +268,38 @@ def get_or_generate_trace(case_id: str, run_res, acc_res, qua_res) -> dict:
     if existing_trace:
         return existing_trace.model_dump()
 
-    model_name = "claude-3-7-sonnet"
-    spans = []
+    # Old/partial cases have no trace file; expose only observed values and never fabricate usage.
+    return TraceMetrics(
+        model_name=os.getenv("EVAL_MODEL", "unknown"),
+        total_elapsed_seconds=run_res.elapsed_seconds if run_res else 0.0,
+        spans=[],
+    ).model_dump()
 
-    # 1. Static Guardrail Scan
-    spans.append({
-        "name": "1. 静态坏依赖与 AST 护栏快筛 (Static Guardrail)",
-        "span_type": "static",
-        "status": "success",
-        "elapsed_seconds": 0.08,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "cost_usd": 0.0,
-        "details": "0 依赖污染，静态校验 100% 毫秒级通过"
-    })
 
-    # 2. Sandbox Runtime
-    run_elapsed = run_res.elapsed_seconds if run_res else 18.2
-    run_status = run_res.status if run_res else "success"
-    spans.append({
-        "name": "2. 虚拟机沙箱环境构建与运行 (Sandbox Execution)",
-        "span_type": "sandbox",
-        "status": run_status,
-        "elapsed_seconds": run_elapsed,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "cost_usd": 0.0,
-        "details": f"执行方式: {run_res.run_method if run_res else 'utm'} | 退出码: {run_res.exit_code if run_res else 0}"
-    })
-
-    # 3. Accuracy Blind Evaluation Agent
-    acc_in = 850
-    acc_out = 220
-    acc_cost = calculate_llm_cost(model_name, acc_in, acc_out)
-    spans.append({
-        "name": "3. 业务功能准确性双盲裁判 Agent (eval-accuracy)",
-        "span_type": "llm_agent",
-        "status": "success",
-        "elapsed_seconds": 3.15,
-        "input_tokens": acc_in,
-        "output_tokens": acc_out,
-        "total_tokens": acc_in + acc_out,
-        "cost_usd": round(acc_cost, 6),
-        "details": f"评级: Grade {acc_res.overall_grade if acc_res else 4} ({acc_res.overall_score if acc_res else 80}分)"
-    })
-
-    # 4. Quality & RCA Agent
-    qua_in = 1350
-    qua_out = 380
-    qua_cost = calculate_llm_cost(model_name, qua_in, qua_out)
-    spans.append({
-        "name": "4. 四大工程质量诊断与 RCA 归因 Agent (eval-quality)",
-        "span_type": "llm_agent",
-        "status": "success",
-        "elapsed_seconds": 3.82,
-        "input_tokens": qua_in,
-        "output_tokens": qua_out,
-        "total_tokens": qua_in + qua_out,
-        "cost_usd": round(qua_cost, 6),
-        "details": f"评级: Grade {qua_res.overall_grade if qua_res else 3} ({qua_res.overall_score if qua_res else 60}分)"
-    })
-
-    total_tokens = acc_in + acc_out + qua_in + qua_out
-    total_cost = acc_cost + qua_cost
-    total_time = 0.08 + run_elapsed + 3.15 + 3.82
-
-    return {
-        "model_name": model_name,
-        "total_elapsed_seconds": round(total_time, 2),
-        "total_input_tokens": acc_in + qua_in,
-        "total_output_tokens": acc_out + qua_out,
-        "total_tokens": total_tokens,
-        "total_cost_usd": round(total_cost, 6),
-        "spans": spans
-    }
+def _is_case_pass(
+    run_res: Optional[RunResult],
+    acc_res: Optional[AccuracyResult],
+    qua_res: Optional[QualityResult],
+    diff_res: Optional[CsvDiffResult],
+) -> bool:
+    """Keep API verdicts aligned with the orchestrator's pass thresholds."""
+    return bool(
+        run_res
+        and run_res.status == "success"
+        and acc_res
+        and acc_res.status == "success"
+        and acc_res.overall_score >= 60.0
+        and qua_res
+        and qua_res.status == "success"
+        and qua_res.overall_score >= 60.0
+        and (
+            not diff_res
+            or (
+                diff_res.status == "success"
+                and diff_res.matched_ratio >= 0.8
+            )
+        )
+    )
 
 
 def get_all_cases() -> List[dict]:
@@ -227,6 +313,7 @@ def get_all_cases() -> List[dict]:
             qua_res = AtomicJsonStorage.load(str(p / "eval_quality.json"), QualityResult)
             diff_res = AtomicJsonStorage.load(str(p / "eval_csv_diff.json"), CsvDiffResult)
             review_res = AtomicJsonStorage.load(str(p / "human_review.json"), HumanReviewEntry)
+            patch_res = AtomicJsonStorage.load(str(p / "patch_result.json"), PatchVerificationResult)
             trace_data = get_or_generate_trace(case_id, run_res, acc_res, qua_res)
 
             cases.append({
@@ -235,8 +322,10 @@ def get_all_cases() -> List[dict]:
                 "accuracy": acc_res.model_dump() if acc_res else None,
                 "quality": qua_res.model_dump() if qua_res else None,
                 "diff": diff_res.model_dump() if diff_res else None,
+                "patch": patch_res.model_dump() if patch_res else None,
                 "human_review": review_res.model_dump() if review_res else None,
-                "trace": trace_data
+                "trace": trace_data,
+                "overall_verdict": "PASS" if _is_case_pass(run_res, acc_res, qua_res, diff_res) else "FAIL"
             })
     return cases
 
@@ -262,6 +351,7 @@ async def get_case(case_id: str):
     qua_res = AtomicJsonStorage.load(str(case_dir / "eval_quality.json"), QualityResult)
     diff_res = AtomicJsonStorage.load(str(case_dir / "eval_csv_diff.json"), CsvDiffResult)
     review_res = AtomicJsonStorage.load(str(case_dir / "human_review.json"), HumanReviewEntry)
+    patch_res = AtomicJsonStorage.load(str(case_dir / "patch_result.json"), PatchVerificationResult)
     trace_data = get_or_generate_trace(case_id, run_res, acc_res, qua_res)
 
     return {
@@ -270,8 +360,10 @@ async def get_case(case_id: str):
         "accuracy": acc_res.model_dump() if acc_res else None,
         "quality": qua_res.model_dump() if qua_res else None,
         "diff": diff_res.model_dump() if diff_res else None,
+        "patch": patch_res.model_dump() if patch_res else None,
         "human_review": review_res.model_dump() if review_res else None,
-        "trace": trace_data
+        "trace": trace_data,
+        "overall_verdict": "PASS" if _is_case_pass(run_res, acc_res, qua_res, diff_res) else "FAIL"
     }
 
 
@@ -314,51 +406,71 @@ async def calibrate_case(case_id: str, req: HumanCalibrationRequest):
 
 
 @app.post("/api/case/{case_id}/execute-repair")
-async def execute_repair(case_id: str, payload: dict = Body(...)):
-    """Executes the AI self-repair agent based on human approved suggestions and custom guidance."""
+async def execute_repair(case_id: str, req: RepairAuthorizationRequest):
+    """Run the real repair agent after an explicit human approval."""
     case_dir = WORK_DIR / case_id
     if not case_dir.exists():
         raise HTTPException(status_code=404, detail="Case directory not found")
 
-    human_guidance = payload.get("human_guidance", "")
-    logger.info(f"[{case_id}] Human approved repair with guidance: {human_guidance}")
+    if not req.authorized:
+        raise HTTPException(status_code=403, detail="必须明确授权后才能执行代码修复。")
+    human_review = AtomicJsonStorage.load(str(case_dir / "human_review.json"), HumanReviewEntry)
+    if human_review is None:
+        raise HTTPException(status_code=403, detail="请先完成人工复核，再授权代码修复。")
+    human_guidance = req.human_guidance.strip()
+    logger.info("[%s] Human-approved repair requested by %s", case_id, human_review.reviewer)
 
-    sandbox = create_sandbox("local")
-    exec_res = sandbox.exec_command(
-        "echo 'AI Auto-Repair Agent: Applying multi-file code fixes and re-running sandbox smoke tests... [ALL TESTS PASSED]'",
-        work_dir=str(case_dir)
+    summary = AtomicJsonStorage.load(
+        str(case_dir / "case_summary.json"), CaseEvalSummary
+    )
+    if summary is None:
+        raise HTTPException(
+            status_code=409,
+            detail="当前用例缺少 case_summary.json，无法安全构造修复上下文，请先完成一次评测。",
+        )
+
+    config = load_yaml_config(WORK_DIR / "eval_config.yaml")
+    trace_model = (
+        summary.trace_metrics.model_name
+        if summary.trace_metrics and summary.trace_metrics.model_name != "unknown"
+        else None
+    )
+    model_name = (
+        trace_model
+        or os.getenv("EVAL_MODEL")
+        or os.getenv("MODEL")
+        or config.get("llm", {}).get("default_model")
+        or "deepseek-v4-flash"
+    )
+    orchestrator = EvalOrchestrator(
+        work_dir=str(WORK_DIR),
+        sandbox=_create_configured_sandbox(config),
+        max_concurrency=1,
+        enable_auto_repair=True,
+        model_name=model_name,
+    )
+    patch_res = await orchestrator.execute_authorized_repair(
+        case_id, summary, human_guidance=human_guidance
     )
 
-    qua_path = str(case_dir / "eval_quality.json")
-    qua_res = AtomicJsonStorage.load(qua_path, QualityResult)
-    old_grade = qua_res.overall_grade if qua_res else 2
-    old_score = qua_res.overall_score if qua_res else 40.0
-    
-    new_grade = min(5, old_grade + 2)
-    new_score = new_grade * 20.0
-
-    if qua_res:
-        qua_res.overall_grade = new_grade
-        qua_res.overall_score = new_score
-        qua_res.strengths.append(f"Auto-Repair executed: Applied approved fix. (Grade {old_grade} -> Grade {new_grade})")
-        AtomicJsonStorage.save(qua_path, qua_res)
-
-    acc_path = str(case_dir / "eval_accuracy.json")
-    acc_res = AtomicJsonStorage.load(acc_path, AccuracyResult)
-    if acc_res:
-        acc_res.overall_grade = min(5, acc_res.overall_grade + 1)
-        acc_res.overall_score = min(100.0, acc_res.overall_score + 20.0)
-        AtomicJsonStorage.save(acc_path, acc_res)
+    if not patch_res.patch_applied:
+        repair_status = "not_applied"
+    elif patch_res.run_after_patch_passed:
+        repair_status = "success"
+    else:
+        repair_status = "verification_failed"
 
     return {
-        "status": "success",
-        "repair_executed": True,
-        "sandbox_passed": True,
-        "old_grade": old_grade,
-        "new_grade": new_grade,
-        "old_score": old_score,
-        "new_score": new_score,
-        "log": exec_res.stdout
+        "status": repair_status,
+        "repair_executed": patch_res.patch_applied,
+        "sandbox_passed": patch_res.run_after_patch_passed,
+        "score_improved": patch_res.score_improved,
+        "old_score": patch_res.old_score,
+        "new_score": patch_res.new_score,
+        "old_grade": round(patch_res.old_score / 20) if patch_res.old_score is not None else None,
+        "new_grade": round(patch_res.new_score / 20) if patch_res.new_score is not None else None,
+        "log": patch_res.verification_log,
+        "human_guidance": human_guidance,
     }
 
 
@@ -668,6 +780,11 @@ async def serve_dashboard():
                                 <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" id="traceTokenBreakdown">In: 0 | Out: 0</div>
                             </div>
                             <div class="card">
+                                <div class="card-label">输入缓存命中</div>
+                                <div class="card-value" id="traceCacheHit">N/A</div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" id="traceCacheBreakdown">Hit: 0 | Miss: 0</div>
+                            </div>
+                            <div class="card">
                                 <div class="card-label">端到端全链路总耗时</div>
                                 <div class="card-value" id="traceLatency">0.0s</div>
                                 <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">包含真实沙箱与 LLM 判定</div>
@@ -765,7 +882,8 @@ async def serve_dashboard():
         };
 
         function getGradeBadge(grade) {
-            const g = grade || 3;
+            if (!grade) return '<span class="grade-badge">N/A</span>';
+            const g = grade;
             const label = gradeLabels[g] || `Grade ${g}`;
             return `<span class="grade-badge grade-${g}">${label}</span>`;
         }
@@ -826,17 +944,17 @@ async def serve_dashboard():
                     </td>
                     <td>
                         ${getGradeBadge(m.overall_grade)}
-                        <span style="font-size: 13px; color: var(--text-muted); margin-left: 4px;">(${m.overall_score}分)</span>
+                        <span style="font-size: 13px; color: var(--text-muted); margin-left: 4px;">(${m.overall_score == null ? 'N/A' : m.overall_score}分)</span>
                     </td>
                     <td><b style="color: #34d399;">${m.sandbox_pass_rate}</b></td>
                     <td><b style="color: var(--accent-blue);">${m.healing_success_rate}</b></td>
-                    <td style="font-weight: bold; color: ${m.avg_cost_usd < 0.005 ? '#34d399' : 'var(--accent-purple)'};">
-                        $${m.avg_cost_usd.toFixed(4)}
+                    <td style="font-weight: bold; color: ${m.avg_cost_usd != null && m.avg_cost_usd < 0.005 ? '#34d399' : 'var(--accent-purple)'};">
+                        ${m.avg_cost_usd == null ? 'N/A' : '$' + m.avg_cost_usd.toFixed(4)}
                     </td>
                     <td style="color: var(--text-muted); font-size: 12px;">${m.avg_latency}</td>
                     <td>
-                        <div style="font-weight: bold; color: ${m.roi_index > 90 ? '#34d399' : 'var(--accent-blue)'};">${m.roi_index} / 100</div>
-                        <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: ${m.roi_index}%;"></div></div>
+                        <div style="font-weight: bold; color: ${m.roi_index != null && m.roi_index > 90 ? '#34d399' : 'var(--accent-blue)'};">${m.roi_index == null ? 'N/A' : `${m.roi_index} / 100`}</div>
+                        <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: ${m.roi_index == null ? 0 : m.roi_index}%;"></div></div>
                     </td>
                 </tr>`;
             });
@@ -851,16 +969,16 @@ async def serve_dashboard():
                         ${getGradeBadge(m.overall_grade)}
                     </div>
                     <div style="font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">🏛️ 架构与规范:</span> <b>${m.pillars.architecture}分</b>
+                        <span style="color: var(--text-muted);">🏛️ 架构与规范:</span> <b>${m.pillars.architecture == null ? 'N/A' : m.pillars.architecture + '分'}</b>
                     </div>
                     <div style="font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">🛡️ 运行时健壮性:</span> <b>${m.pillars.robustness}分</b>
+                        <span style="color: var(--text-muted);">🛡️ 运行时健壮性:</span> <b>${m.pillars.robustness == null ? 'N/A' : m.pillars.robustness + '分'}</b>
                     </div>
                     <div style="font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">⚡ 性能与安全:</span> <b>${m.pillars.security}分</b>
+                        <span style="color: var(--text-muted);">⚡ 性能与安全:</span> <b>${m.pillars.security == null ? 'N/A' : m.pillars.security + '分'}</b>
                     </div>
                     <div style="font-size: 12px; margin-bottom: 10px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">📦 交付可观测:</span> <b>${m.pillars.deliverability}分</b>
+                        <span style="color: var(--text-muted);">📦 交付可观测:</span> <b>${m.pillars.deliverability == null ? 'N/A' : m.pillars.deliverability + '分'}</b>
                     </div>
                     <div style="font-size: 11px; color: var(--text-muted); background: #070d19; padding: 8px; border-radius: 6px; line-height: 1.4;">
                         ${m.recommendation}
@@ -882,7 +1000,7 @@ async def serve_dashboard():
                 const item = document.createElement('div');
                 item.className = 'case-item' + (c.case_id === currentCaseId ? ' active' : '');
                 
-                const qGrade = c.quality ? (c.quality.overall_grade || Math.round(c.quality.overall_score / 20)) : 3;
+                const qGrade = c.quality ? (c.quality.overall_grade || Math.round(c.quality.overall_score / 20)) : null;
 
                 item.innerHTML = `
                     <div class="case-item-title">
@@ -911,14 +1029,14 @@ async def serve_dashboard():
             document.getElementById('currentCaseTitle').innerText = `Case: ${c.case_id} 评测与复核详情`;
 
             // Top Metrics
-            document.getElementById('metricRun').innerText = c.run ? c.run.status.toUpperCase() : 'N/A';
+            document.getElementById('metricRun').innerText = c.run ? `${c.run.status.toUpperCase()} (${c.overall_verdict || 'UNKNOWN'})` : 'N/A';
             document.getElementById('metricRun').style.color = (c.run && c.run.status === 'success') ? 'var(--accent-green)' : 'var(--accent-red)';
 
-            const accGrade = c.accuracy ? (c.accuracy.overall_grade || Math.round(c.accuracy.overall_score / 20)) : 4;
-            const quaGrade = c.quality ? (c.quality.overall_grade || Math.round(c.quality.overall_score / 20)) : 3;
+            const accGrade = c.accuracy ? (c.accuracy.overall_grade || Math.round(c.accuracy.overall_score / 20)) : null;
+            const quaGrade = c.quality ? (c.quality.overall_grade || Math.round(c.quality.overall_score / 20)) : null;
 
-            document.getElementById('metricAcc').innerHTML = `${getGradeBadge(accGrade)} <span style="font-size: 15px; color: var(--text-muted);">(${c.accuracy ? c.accuracy.overall_score : 80}分)</span>`;
-            document.getElementById('metricQuality').innerHTML = `${getGradeBadge(quaGrade)} <span style="font-size: 15px; color: var(--text-muted);">(${c.quality ? c.quality.overall_score : 60}分)</span>`;
+            document.getElementById('metricAcc').innerHTML = c.accuracy ? `${getGradeBadge(accGrade)} <span style="font-size: 15px; color: var(--text-muted);">(${c.accuracy.overall_score}分)</span>` : 'N/A';
+            document.getElementById('metricQuality').innerHTML = c.quality ? `${getGradeBadge(quaGrade)} <span style="font-size: 15px; color: var(--text-muted);">(${c.quality.overall_score}分)</span>` : 'N/A';
 
             if (c.human_review) {
                 const hg = c.human_review.calibrated_grade || 4;
@@ -928,7 +1046,7 @@ async def serve_dashboard():
             } else {
                 document.getElementById('metricReview').innerText = '待复核';
                 document.getElementById('metricReview').style.color = 'var(--accent-blue)';
-                document.getElementById('reviewGrade').value = String(quaGrade);
+                document.getElementById('reviewGrade').value = String(quaGrade || 3);
                 document.getElementById('reviewFeedback').value = '';
             }
 
@@ -974,19 +1092,28 @@ async def serve_dashboard():
             renderList('combinedSuggestionsList', allSuggs.length > 0 ? allSuggs : ['暂无明显缺陷，系统运行良好']);
 
             // Tab 5: Observability & Trace Waterfall
-            const trace = c.trace || {};
-            document.getElementById('traceCost').innerText = `$${(trace.total_cost_usd || 0.0034).toFixed(5)} USD`;
-            document.getElementById('traceCostCny').innerText = `≈ ¥${((trace.total_cost_usd || 0.0034) * 7.25).toFixed(4)} RMB`;
-            document.getElementById('traceTokens').innerText = (trace.total_tokens || 0).toLocaleString();
-            document.getElementById('traceTokenBreakdown').innerText = `Prompt: ${trace.total_input_tokens || 0} | Gen: ${trace.total_output_tokens || 0}`;
-            document.getElementById('traceLatency').innerText = `${trace.total_elapsed_seconds || 0}s`;
-            document.getElementById('traceModel').innerText = trace.model_name || 'claude-3-7-sonnet';
+            const trace = c.trace;
+            const traceCost = Number((trace && trace.total_cost_usd) || 0);
+            document.getElementById('traceCost').innerText = trace ? `$${traceCost.toFixed(5)} USD` : 'N/A';
+            document.getElementById('traceCostCny').innerText = trace ? `≈ ¥${(traceCost * 7.25).toFixed(4)} RMB` : 'N/A';
+            document.getElementById('traceTokens').innerText = trace ? (trace.total_tokens || 0).toLocaleString() : 'N/A';
+            document.getElementById('traceTokenBreakdown').innerText = trace ? `Prompt: ${trace.total_input_tokens || 0} | Gen: ${trace.total_output_tokens || 0}` : 'N/A';
+            const cacheHit = Number((trace && trace.cache_hit_input_tokens) || 0);
+            const cacheMiss = Number((trace && trace.cache_miss_input_tokens) || 0);
+            const cacheObserved = cacheHit + cacheMiss;
+            const cacheRate = trace && trace.cache_hit_rate != null
+                ? Number(trace.cache_hit_rate) * 100
+                : null;
+            document.getElementById('traceCacheHit').innerText = cacheRate == null ? 'N/A' : `${cacheRate.toFixed(1)}%`;
+            document.getElementById('traceCacheBreakdown').innerText = trace ? `Hit: ${cacheHit.toLocaleString()} | Miss: ${cacheMiss.toLocaleString()} | Observed: ${cacheObserved.toLocaleString()}` : 'N/A';
+            document.getElementById('traceLatency').innerText = trace ? `${trace.total_elapsed_seconds || 0}s` : 'N/A';
+            document.getElementById('traceModel').innerText = (trace && trace.model_name) || 'unknown';
 
             const traceTable = document.querySelector('#traceWaterfallTable tbody');
             traceTable.innerHTML = '';
-            const maxElapsed = Math.max(...(trace.spans || [{elapsed_seconds: 1}]).map(s => s.elapsed_seconds || 1));
+            const maxElapsed = Math.max(...((trace && trace.spans) || [{elapsed_seconds: 1}]).map(s => s.elapsed_seconds || 1));
 
-            (trace.spans || []).forEach(s => {
+            ((trace && trace.spans) || []).forEach(s => {
                 const widthPct = Math.max(8, Math.min(100, (s.elapsed_seconds / maxElapsed) * 100));
                 const spanBadgeColor = s.span_type === 'static' ? '#38bdf8' : (s.span_type === 'sandbox' ? '#f59e0b' : '#c084fc');
                 const statusColor = s.status === 'success' ? '#34d399' : '#f87171';
@@ -1003,7 +1130,7 @@ async def serve_dashboard():
                         <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: ${widthPct}%;"></div></div>
                     </td>
                     <td style="font-size: 12px; color: var(--text-muted);">
-                        ${s.total_tokens > 0 ? `<b>${s.total_tokens}</b> (${s.input_tokens} / ${s.output_tokens})` : '<span style="color:#64748b;">0 (本地/沙箱)</span>'}
+                        ${s.total_tokens > 0 ? `<b>${s.total_tokens}</b> (${s.input_tokens} / ${s.output_tokens})<br><span style="font-size:11px;">Cache: ${s.cache_hit_rate == null ? 'N/A' : (Number(s.cache_hit_rate) * 100).toFixed(1) + '%'}</span>` : '<span style="color:#64748b;">0 (本地/沙箱)</span>'}
                     </td>
                     <td style="font-size: 12px; font-weight: bold; color: ${s.cost_usd > 0 ? 'var(--accent-purple)' : '#64748b'};">
                         ${s.cost_usd > 0 ? '$' + s.cost_usd.toFixed(5) : '$0.0000'}
@@ -1057,10 +1184,15 @@ async def serve_dashboard():
             const res = await fetch(`/api/case/${currentCaseId}/execute-repair`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ human_guidance: guidance })
+                body: JSON.stringify({ authorized: true, human_guidance: guidance })
             });
             const data = await res.json();
-            alert(`🎉 授权成功！AI 自愈 Agent 已完成代码修改并在沙箱复测通过！\n质量评级由 Grade ${data.old_grade} 跃升至 Grade ${data.new_grade} (${gradeLabels[data.new_grade]})！`);
+            const statusMessage = data.status === 'success'
+                ? 'AI 自愈 Agent 已完成代码修改并通过沙箱复测。'
+                : data.status === 'verification_failed'
+                    ? '补丁已写入，但沙箱复测未通过，请查看验证日志。'
+                    : 'AI 未应用补丁。';
+            alert(`授权处理完成：${statusMessage}\n质量评级：Grade ${data.old_grade ?? 'N/A'} → Grade ${data.new_grade ?? 'N/A'}。`);
             fetchCases();
         }
 
@@ -1073,7 +1205,7 @@ async def serve_dashboard():
     return HTMLResponse(content=html)
 
 
-async def start_server_async(host: str = "0.0.0.0", port: int = 8000):
+async def start_server_async(host: str = "127.0.0.1", port: int = 8000):
     """Async entry point to launch the HITL FastAPI server within an event loop."""
     import uvicorn
     logger.info(f"Starting Eval-Agent HITL Console at http://{host}:{port}")
@@ -1082,7 +1214,7 @@ async def start_server_async(host: str = "0.0.0.0", port: int = 8000):
     await server.serve()
 
 
-def start_server(host: str = "0.0.0.0", port: int = 8000):
+def start_server(host: str = "127.0.0.1", port: int = 8000):
     """Sync entry point to launch the HITL FastAPI server."""
     import uvicorn
     logger.info(f"Starting Eval-Agent HITL Console at http://{host}:{port}")

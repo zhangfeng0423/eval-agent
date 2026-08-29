@@ -146,6 +146,11 @@ class HumanCalibrationRequest(BaseModel):
     reviewer: str = "expert"
 
 
+class RepairAuthorizationRequest(BaseModel):
+    authorized: bool = False
+    human_guidance: str = ""
+
+
 class TraceSpan(BaseModel):
     name: str
     span_type: str = "llm_agent"  # "static", "sandbox", "llm_agent"
@@ -154,6 +159,10 @@ class TraceSpan(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cache_hit_input_tokens: int = 0
+    cache_miss_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_hit_rate: Optional[float] = None
     cost_usd: float = 0.0
     details: str = ""
 
@@ -164,6 +173,10 @@ class TraceMetrics(BaseModel):
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_tokens: int = 0
+    cache_hit_input_tokens: int = 0
+    cache_miss_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_hit_rate: Optional[float] = None
     total_cost_usd: float = 0.0
     spans: List[TraceSpan] = Field(default_factory=list)
 

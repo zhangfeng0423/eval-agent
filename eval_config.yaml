@@ -12,8 +12,11 @@ pipeline:
   # 运行耗时超过此阈值（秒）且失败时，触发失败反思与坏依赖自学习
   slow_fail_threshold_seconds: 120.0
   
-  # 是否开启自动生成补丁与沙箱回测验证（自愈闭环）
+  # 是否启用修复能力；通过 HITL 控制台显式授权后才会执行
   enable_auto_repair: true
+
+  # 是否允许批处理在没有逐用例人工确认时直接应用补丁（默认关闭）
+  allow_automatic_repair: false
   
   # 任务工作目录（默认当前目录）
   work_dir: "."

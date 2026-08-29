@@ -4,7 +4,8 @@ mcp_tools.py — Model Context Protocol (MCP) server definitions exposing standa
 
 import os
 import subprocess
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 from claude_agent_sdk import tool, create_sdk_mcp_server
 
 try:
@@ -122,8 +123,11 @@ def create_guardrail_mcp_server(store: BadDepsStore, server_name: str = "guardra
     )
 
 
-def create_patch_mcp_server(server_name: str = "patch_tools"):
-    """Creates an SDK MCP server exposing safe code patch application and rollback."""
+def create_patch_mcp_server(
+    server_name: str = "patch_tools", allowed_root: Optional[str] = None
+):
+    """Create a patch server restricted to one evaluation source tree."""
+    resolved_root = Path(allowed_root).expanduser().resolve() if allowed_root else None
 
     @tool(
         "apply_patch",
@@ -136,20 +140,41 @@ def create_patch_mcp_server(server_name: str = "patch_tools"):
     async def apply_patch(args: Dict[str, Any]) -> Dict[str, Any]:
         target_dir = args.get("target_dir", "")
         patch_content = args.get("patch_content", "")
-        patch_file = os.path.join(target_dir, ".temp_agent_patch.diff")
-
         try:
-            with open(patch_file, "w", encoding="utf-8") as f:
-                f.write(patch_content)
-            
+            target_path = Path(target_dir).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            return {
+                "content": [{"type": "text", "text": "Invalid patch target directory."}],
+                "is_error": True,
+            }
+        if not target_path.is_dir():
+            return {
+                "content": [{"type": "text", "text": "Patch target must be a directory."}],
+                "is_error": True,
+            }
+        if resolved_root is not None:
+            try:
+                target_path.relative_to(resolved_root)
+            except ValueError:
+                return {
+                    "content": [{"type": "text", "text": "Patch target is outside the authorized source tree."}],
+                    "is_error": True,
+                }
+        if not isinstance(patch_content, str) or not patch_content.strip():
+            return {
+                "content": [{"type": "text", "text": "Patch content cannot be empty."}],
+                "is_error": True,
+            }
+
+        patch_file = target_path / ".temp_agent_patch.diff"
+        try:
+            patch_file.write_text(patch_content, encoding="utf-8")
             proc = subprocess.run(
-                ["git", "apply", "--ignore-whitespace", ".temp_agent_patch.diff"],
-                cwd=target_dir,
+                ["git", "apply", "--ignore-whitespace", patch_file.name],
+                cwd=str(target_path),
                 capture_output=True,
-                text=True
+                text=True,
             )
-            if os.path.exists(patch_file):
-                os.remove(patch_file)
 
             if proc.returncode == 0:
                 return {"content": [{"type": "text", "text": "Patch successfully applied."}]}
@@ -163,6 +188,11 @@ def create_patch_mcp_server(server_name: str = "patch_tools"):
                 "content": [{"type": "text", "text": f"Error applying patch: {str(e)}"}],
                 "is_error": True
             }
+        finally:
+            try:
+                patch_file.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     return create_sdk_mcp_server(
         name=server_name,
