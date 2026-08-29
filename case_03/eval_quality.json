@@ -1,0 +1,22 @@
+{
+  "status": "fail",
+  "overall_grade": 1,
+  "overall_score": 20.0,
+  "dimensions": [
+    {
+      "name": "性能与安全防线",
+      "grade": 1,
+      "score": 20.0,
+      "comment": "引入了高危投毒第三方依赖，已被静态护栏秒级拦截！"
+    }
+  ],
+  "code_structure_analysis": "",
+  "strengths": [],
+  "weaknesses": [
+    "依赖清单中包含已知后门恶意包"
+  ],
+  "repair_suggestions": [
+    "从 package.json 中剔除 event-stream@3.3.6 并替换为官方安全版本"
+  ],
+  "raw_output": ""
+}

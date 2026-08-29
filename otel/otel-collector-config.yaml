@@ -1,0 +1,10 @@
+service:
+  pipelines:
+
+    traces:
+      receivers:
+        - otlp
+
+      exporters:
+        - otlphttp/langfuse
+        - otlp/jaeger

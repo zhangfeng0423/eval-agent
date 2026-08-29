@@ -1,0 +1,77 @@
+# ==============================================================================
+# AI Code Evaluation & Self-Healing Agent SDK Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Pipeline & Concurrency Settings
+# ------------------------------------------------------------------------------
+pipeline:
+  # 最大并行评测 Case 数量（受限于机器 CPU/内存及 LLM API 速率限制）
+  max_concurrency: 5
+  
+  # 运行耗时超过此阈值（秒）且失败时，触发失败反思与坏依赖自学习
+  slow_fail_threshold_seconds: 120.0
+  
+  # 是否开启自动生成补丁与沙箱回测验证（自愈闭环）
+  enable_auto_repair: true
+  
+  # 任务工作目录（默认当前目录）
+  work_dir: "."
+
+# ------------------------------------------------------------------------------
+# 2. Sandbox Isolation Environment
+# ------------------------------------------------------------------------------
+sandbox:
+  # 沙箱类型: utm (Ubuntu VM SSH), orbstack (容器), local (本地宿主机)
+  type: "utm"
+  
+  # UTM 虚拟机 SSH 配置（当 type 为 utm 时生效）
+  utm:
+    host: "127.0.0.1"
+    port: 2222
+    user: "ubuntu"
+    ssh_key_path: null  # 如需指定私钥，填入绝对路径，例如 "~/.ssh/id_rsa"
+    connect_timeout_seconds: 5
+  
+  # OrbStack 配置（当 type 为 orbstack 时生效）
+  orbstack:
+    machine_name: "eval-runner"
+  
+  # 单条命令执行默认超时时间（秒）
+  default_exec_timeout_seconds: 120
+
+# ------------------------------------------------------------------------------
+# 3. Large Language Model (LLM) Settings
+# ------------------------------------------------------------------------------
+llm:
+  # 默认使用的评测模型（如 claude-3-7-sonnet, deepseek-v4-flash, kimi-k2.6）
+  default_model: "deepseek-v4-flash"
+  
+  # 主控 API 端点与 Key 在 .env 文件中统一管理 (ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY)
+  temperature: 0.1
+
+# ------------------------------------------------------------------------------
+# 4. Guardrails & Self-Learning Memory Bank
+# ------------------------------------------------------------------------------
+guardrails:
+  # 坏依赖规则库持久化存储路径
+  bad_deps_store_path: "bad_deps.json"
+  
+  # 学习到的新规则默认生命周期（TTL 天数），过期自动淘汰清理
+  default_ttl_days: 30
+  
+  # 记录新坏依赖前，是否调用 npm / PyPI / Maven 官方源 API 预检防幻觉
+  verify_online_registry: true
+
+# ------------------------------------------------------------------------------
+# 5. Output & Observability
+# ------------------------------------------------------------------------------
+reporting:
+  output_markdown_path: "eval/output.md"
+  output_html_viz_path: "eval/output_viz.html"
+  
+# OpenTelemetry 分布式追踪配置
+opentelemetry:
+  enabled: false
+  exporter_endpoint: "http://localhost:4317"
+  service_name: "eval-agent-sdk"

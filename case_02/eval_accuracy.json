@@ -1,0 +1,30 @@
+{
+  "status": "success",
+  "overall_grade": 3,
+  "overall_score": 60.0,
+  "dimensions": [
+    {
+      "dimension": "核心业务功能",
+      "grade": 3,
+      "score": 60.0,
+      "reason": "缺少平安银行跨年度报表比对计算。"
+    },
+    {
+      "dimension": "边界与异常容错",
+      "grade": 2,
+      "score": 40.0,
+      "reason": "网络请求堵塞直接导致服务宕机。"
+    }
+  ],
+  "strengths": [
+    "股票代码识别准确"
+  ],
+  "weaknesses": [
+    "未处理网络超时与非交易日容错"
+  ],
+  "repair_suggestions": [
+    "增加 pandas 环比差额计算",
+    "网络请求层增加超时捕获与重试机制"
+  ],
+  "raw_output": ""
+}

@@ -1,0 +1,38 @@
+{
+  "status": "success",
+  "overall_grade": 5,
+  "overall_score": 100.0,
+  "dimensions": [
+    {
+      "name": "架构与工程规范",
+      "grade": 5,
+      "score": 100.0,
+      "comment": "高内聚低耦合，符合官方规范。"
+    },
+    {
+      "name": "运行时健壮性",
+      "grade": 5,
+      "score": 100.0,
+      "comment": "全局异常拦截器与统一响应封装完备。"
+    },
+    {
+      "name": "性能与安全防线",
+      "grade": 5,
+      "score": 100.0,
+      "comment": "无SQL注入漏洞，并发连接池配置合理。"
+    },
+    {
+      "name": "交付体验与可观测性",
+      "grade": 4,
+      "score": 80.0,
+      "comment": "包含结构化日志，建议注入TraceID。"
+    }
+  ],
+  "code_structure_analysis": "",
+  "strengths": [
+    "代码达到企业生产级上线标准"
+  ],
+  "weaknesses": [],
+  "repair_suggestions": [],
+  "raw_output": ""
+}

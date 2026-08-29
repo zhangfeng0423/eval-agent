@@ -1,0 +1,44 @@
+{
+  "status": "success",
+  "overall_grade": 2,
+  "overall_score": 40.0,
+  "dimensions": [
+    {
+      "name": "架构与工程规范",
+      "grade": 3,
+      "score": 60.0,
+      "comment": "模块划分尚可，但缺少服务层抽象。"
+    },
+    {
+      "name": "运行时健壮性",
+      "grade": 1,
+      "score": 20.0,
+      "comment": "第42行 requests.post 未设置 timeout 导致死锁。"
+    },
+    {
+      "name": "性能与安全防线",
+      "grade": 3,
+      "score": 60.0,
+      "comment": "同步 I/O 阻塞了 FastAPI 事件循环。"
+    },
+    {
+      "name": "交付体验与可观测性",
+      "grade": 2,
+      "score": 40.0,
+      "comment": "缺少重试与降级日志。"
+    }
+  ],
+  "code_structure_analysis": "",
+  "strengths": [
+    "工具层与业务层逻辑基本分离"
+  ],
+  "weaknesses": [
+    "requests.post 裸调用导致服务崩溃",
+    "缺少异步非阻塞网络封装"
+  ],
+  "repair_suggestions": [
+    "在 requests.post 中增加 timeout=15 并捕获 RequestException 异常",
+    "改造为 httpx.AsyncClient 异步非阻塞调用，并增加 3 次指数退避重试"
+  ],
+  "raw_output": ""
+}

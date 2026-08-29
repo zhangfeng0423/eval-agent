@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "attempt_count": 1,
+  "exit_code": 0,
+  "log_summary": "Maven build succeeded. Spring Boot application smoke tests passed on port 8080.",
+  "error_snippet": "",
+  "run_method": "llm_agent",
+  "note": "",
+  "inspect_cmd": "",
+  "elapsed_seconds": 18.2
+}

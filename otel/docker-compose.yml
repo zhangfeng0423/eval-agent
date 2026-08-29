@@ -1,0 +1,12 @@
+exporters:
+
+  otlphttp/langfuse:
+    endpoint: "https://cloud.langfuse.com/api/public/otel"
+    headers:
+      Authorization: "${env:LANGFUSE_AUTH}"
+      x-langfuse-ingestion-version: "4"
+
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
