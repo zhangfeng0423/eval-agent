@@ -1266,7 +1266,7 @@ function renderHome() {
     html += '<div class="hero">';
     html += '<div class="hero-title">让代码给自己<span class="accent">做手术</span>的系统</div>';
     html += '<div class="hero-sub">Eval-Agent 不是又一个"AI 帮你写代码"——它是一套<strong>5 档硬锚定评级 + 自愈修复 + 成本追踪</strong>的代码评测 SDK。普通 AI 只会说"有问题"，我们告诉你<strong>什么级别、修好要几步、修完什么分数、花多少钱</strong>。</div>';
-    html += '<div class="hero-tag">Hackathon Demo 2026 · Python SDK · ~7,500 LOC · 4 Live Cases</div>';
+    html += '<div class="hero-tag">Hackathon Demo 2026 · Python SDK · ~7,500 LOC · 5 Live Cases</div>';
     html += '</div>';
 
     // === Folder Evaluator Panel on Home ===
