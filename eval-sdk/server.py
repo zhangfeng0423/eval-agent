@@ -689,6 +689,12 @@ async def evaluate_folder_api(req: FolderEvaluationRequest):
     for live stage updates (runtime -> accuracy -> quality -> complete).
     """
     case_id, case_dir = _resolve_eval_target(req.folder_path, req.custom_name)
+    for jid, existing in _EVAL_JOBS.items():
+        if existing["case_id"] == case_id and existing["status"] in ("queued", "running"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{case_id}' is already being evaluated (job {jid}); wait for it to finish.",
+            )
     model = (req.model or "").strip() or _default_eval_model()
     job_id = uuid.uuid4().hex
     _EVAL_JOBS[job_id] = {
@@ -1179,6 +1185,8 @@ async function runFolderEvaluation(prefix) {
         'complete':  '✅ 评测完成，正在加载深度报告...'
     };
 
+    const resetSubmit = () => { if (submitBtn) submitBtn.disabled = false; };
+
     try {
         const res = await fetch('/api/evaluate-folder', {
             method: 'POST',
@@ -1193,6 +1201,7 @@ async function runFolderEvaluation(prefix) {
 
         const data = await res.json();
         if (!res.ok) {
+            resetSubmit();
             throw new Error(data.detail || '评测失败');
         }
 
@@ -1204,10 +1213,22 @@ async function runFolderEvaluation(prefix) {
             let prog;
             try {
                 const pres = await fetch('/api/evaluate-progress/' + jobId);
+                if (!pres.ok) {
+                    clearInterval(poll); resetSubmit();
+                    if (stepSpan) stepSpan.textContent = '评测任务状态丢失（服务可能已重启），请重新提交';
+                    if (logDiv) logDiv.innerHTML += '<br><span style="color:var(--fail)">✗ 状态查询失败: HTTP ' + pres.status + '</span>';
+                    return;
+                }
                 prog = await pres.json();
             } catch(e) {
-                clearInterval(poll);
+                clearInterval(poll); resetSubmit();
                 if (stepSpan) stepSpan.textContent = '评测状态查询失败: ' + e.message;
+                if (logDiv) logDiv.innerHTML += '<br><span style="color:var(--fail)">✗ 轮询错误: ' + escapeHtml(e.message) + '</span>';
+                return;
+            }
+            if (!prog || !prog.status) {
+                clearInterval(poll); resetSubmit();
+                if (stepSpan) stepSpan.textContent = '评测任务状态异常，请重新提交';
                 return;
             }
             const stage = prog.stage || 'preparing';
@@ -1218,17 +1239,18 @@ async function runFolderEvaluation(prefix) {
             if (stepSpan) stepSpan.textContent = '评测中 (已耗时 ' + prog.elapsed_seconds + 's)...';
 
             if (prog.status === 'done') {
-                clearInterval(poll);
+                clearInterval(poll); resetSubmit();
                 if (stepSpan) stepSpan.textContent = '评测完成！正在加载深度报告...';
                 showToast('评测成功: ' + data.case_id, 'success');
-                // Refresh cases dropdown
-                casesData = await fetchJSON('/api/cases');
-                const sel = document.getElementById('case-select');
-                sel.innerHTML = casesData.map(c => '<option value="' + c.case_id + '">' + c.case_id + '</option>').join('');
+                try {
+                    casesData = await fetchJSON('/api/cases');
+                    const sel = document.getElementById('case-select');
+                    if (sel) sel.innerHTML = casesData.map(c => '<option value="' + c.case_id + '">' + c.case_id + '</option>').join('');
+                } catch(e) { /* 非致命：case 下拉刷新失败不阻断报告加载 */ }
                 if (prefix === 'modal') closeModal('evaluate-modal');
                 loadCase(data.case_id);
             } else if (prog.status === 'failed') {
-                clearInterval(poll);
+                clearInterval(poll); resetSubmit();
                 const errMsg = prog.error || '未知错误';
                 if (stepSpan) stepSpan.textContent = '评测失败: ' + errMsg;
                 if (logDiv) logDiv.innerHTML += '<br><span style="color:var(--fail)">✗ 错误: ' + escapeHtml(errMsg) + '</span>';
@@ -1236,11 +1258,10 @@ async function runFolderEvaluation(prefix) {
             }
         }, 2000);
     } catch(e) {
+        resetSubmit();
         if (stepSpan) stepSpan.textContent = '评测失败: ' + e.message;
         if (logDiv) logDiv.innerHTML += '<br><span style="color:var(--fail)">✗ 错误: ' + escapeHtml(e.message) + '</span>';
         showToast(e.message, 'error');
-    } finally {
-        if (submitBtn) submitBtn.disabled = false;
     }
 }
 
