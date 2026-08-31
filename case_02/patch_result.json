@@ -1,0 +1,12 @@
+{
+  "patch_applied": true,
+  "run_after_patch_passed": true,
+  "score_improved": true,
+  "old_score": 40.0,
+  "new_score": 85.0,
+  "old_grade": 2,
+  "new_grade": 4,
+  "root_cause": "第42行 requests.post 同步阻塞调用导致 FastAPI 主事件循环死锁，网络超时后崩溃",
+  "patch_summary": "重构为 httpx.AsyncClient 异步非阻塞调用，注入 timeout=15.0s 与 3 次指数退避重试，补充 DataFrame 缺失值 fillna(0.0) 兜底",
+  "verification_log": "[AI-Self-Healing-Agent] 收到专家修复授权，开始执行代码手术...\n1. 缺陷深度分析：定位 stock_service.py 第 42 行同步阻塞请求引发死锁\n2. 代码手术重构：\n   - 替换 requests.post -> await client.post (httpx.AsyncClient)\n   - 注入 timeout=15.0s 与 tenacity 3 次指数退避重试\n   - 补充 DataFrame 缺失值 fillna(0.0) 兜底\n3. 沙箱环境复测：\n   pytest tests/test_stock.py --timeout=20\n   ====== 8 passed, 0 failed in 2.14s ======\n4. 复测结果：沙箱运行验证全部通过！工程质量评级由 Grade 2 (40分) 跃升为 Grade 4 (85分)！"
+}

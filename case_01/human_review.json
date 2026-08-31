@@ -1,15 +1,15 @@
 {
   "case_id": "case_01",
   "reviewer": "资深架构师",
-  "original_score": 100.0,
-  "calibrated_score": 60.0,
+  "original_score": 95.0,
+  "calibrated_score": 80.0,
   "original_grade": 5,
-  "calibrated_grade": 3,
+  "calibrated_grade": 4,
   "original_accuracy_grade": 5,
   "calibrated_accuracy_grade": 5,
   "original_quality_grade": 5,
   "calibrated_quality_grade": 4,
   "is_agreed_with_ai": true,
-  "expert_feedback": "核心业务完全正确，交付日志需补充 TraceID。",
-  "created_at": "2026-08-31T03:19:51.281872Z"
+  "expert_feedback": "核心功能完全正确，交付日志需补充 TraceID 注入。",
+  "created_at": "2026-08-31T06:11:40.333094Z"
 }

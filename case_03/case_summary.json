@@ -1,0 +1,93 @@
+{
+  "case_id": "case_03",
+  "task_type": "generation",
+  "total_elapsed_seconds": 0.0,
+  "run_result": {
+    "status": "fail",
+    "attempt_count": 1,
+    "exit_code": 126,
+    "log_summary": "FAST-FAIL: Static Guardrail intercepted blacklisted dependency 'event-stream@3.3.6' (Known Bitcoin Wallet Exploit).",
+    "error_snippet": "GuardrailViolation: Dependency 'event-stream@3.3.6' failed security safety check. Dangerous sandbox execution skipped to protect host environment.",
+    "run_method": "static_analysis",
+    "note": "",
+    "inspect_cmd": "",
+    "elapsed_seconds": 0.08
+  },
+  "accuracy_result": {
+    "status": "fail",
+    "overall_grade": 1,
+    "overall_score": 0.0,
+    "dimensions": [
+      {
+        "dimension": "安全性门禁",
+        "grade": 1,
+        "score": 0.0,
+        "reason": "代码包含恶意供应链攻击后门，触发最高级别红线拦截。"
+      }
+    ],
+    "strengths": [],
+    "weaknesses": [
+      "存在已知后门投毒恶意包"
+    ],
+    "repair_suggestions": [
+      "从 package.json 移除 event-stream@3.3.6 并替换为官方无害版本"
+    ],
+    "raw_output": ""
+  },
+  "quality_result": {
+    "status": "fail",
+    "overall_grade": 1,
+    "overall_score": 20.0,
+    "dimensions": [
+      {
+        "name": "性能与安全防线",
+        "grade": 1,
+        "score": 20.0,
+        "comment": "引入了高危投毒第三方依赖，已被静态护栏在 0.08 秒内秒级拦截！"
+      }
+    ],
+    "code_structure_analysis": "",
+    "strengths": [],
+    "weaknesses": [
+      "依赖清单中包含已知后门恶意包"
+    ],
+    "repair_suggestions": [
+      "从 package.json 中剔除 event-stream@3.3.6 并替换为官方安全版本"
+    ],
+    "raw_output": ""
+  },
+  "csv_diff_result": null,
+  "patch_result": null,
+  "human_review": null,
+  "trace_metrics": {
+    "model_name": "guardrail-ast",
+    "total_elapsed_seconds": 0.08,
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "total_tokens": 0,
+    "cache_hit_input_tokens": 0,
+    "cache_miss_input_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_hit_rate": 1.0,
+    "total_cost_usd": 0.0,
+    "spans": [
+      {
+        "name": "1. AST 坏依赖与静态安全快筛",
+        "span_type": "static",
+        "status": "fail",
+        "elapsed_seconds": 0.08,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0,
+        "details": "0 Token / 0.08s 成功拦截恶意包 event-stream@3.3.6"
+      }
+    ]
+  },
+  "overall_verdict": "PASS",
+  "last_updated": "2026-08-31T06:12:54.814891Z"
+}

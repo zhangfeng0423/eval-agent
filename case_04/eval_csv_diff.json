@@ -1,0 +1,21 @@
+{
+  "status": "success",
+  "matched_ratio": 0.985,
+  "total_rows": 10000,
+  "matched_rows": 9850,
+  "diff_rows": 150,
+  "diff_summary": "",
+  "missing_items": [],
+  "unexpected_items": [],
+  "details": {
+    "discrepancies": [
+      {
+        "row": 42,
+        "field": "tax_rate",
+        "expected": "0.060",
+        "actual": "0.062"
+      }
+    ]
+  },
+  "raw_output": ""
+}

@@ -1,0 +1,29 @@
+{
+  "model_name": "guardrail-ast",
+  "total_elapsed_seconds": 0.08,
+  "total_input_tokens": 0,
+  "total_output_tokens": 0,
+  "total_tokens": 0,
+  "cache_hit_input_tokens": 0,
+  "cache_miss_input_tokens": 0,
+  "cache_creation_input_tokens": 0,
+  "cache_hit_rate": 1.0,
+  "total_cost_usd": 0.0,
+  "spans": [
+    {
+      "name": "1. AST 坏依赖与静态安全快筛",
+      "span_type": "static",
+      "status": "fail",
+      "elapsed_seconds": 0.08,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "total_tokens": 0,
+      "cache_hit_input_tokens": 0,
+      "cache_miss_input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "cache_hit_rate": null,
+      "cost_usd": 0.0,
+      "details": "0 Token / 0.08s 成功拦截恶意包 event-stream@3.3.6"
+    }
+  ]
+}

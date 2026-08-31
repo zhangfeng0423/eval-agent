@@ -1,0 +1,31 @@
+{
+  "status": "fail",
+  "overall_grade": 2,
+  "overall_score": 40.0,
+  "dimensions": [
+    {
+      "dimension": "核心业务计费逻辑",
+      "grade": 2,
+      "score": 40.0,
+      "reason": "LongCat 审查发现：会员折扣公式严重倒置，将 (1 - tier_rate) 误算为减免金额，导致结算金额失真。"
+    },
+    {
+      "dimension": "边界异常与接口防御",
+      "grade": 3,
+      "score": 60.0,
+      "reason": "优惠券门槛直接使用折前价校验，导致优惠券越权生效。"
+    }
+  ],
+  "strengths": [
+    "接口契约与 Pydantic V2 模型定义完整"
+  ],
+  "weaknesses": [
+    "VIP 订单计费断言失败 (332.5 != 17.5)",
+    "引入了同步 requests 阻塞调用，存在事件循环饥饿风险"
+  ],
+  "repair_suggestions": [
+    "将 tier_discount 计算公式修正为 original_total * tier_rate",
+    "将 requests.post 改写为 httpx.AsyncClient 异步非阻塞调用并配置超时保护"
+  ],
+  "raw_output": ""
+}

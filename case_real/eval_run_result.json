@@ -1,0 +1,11 @@
+{
+  "status": "fail",
+  "attempt_count": 1,
+  "exit_code": 1,
+  "log_summary": "测试执行失败: \n..F\n======================================================================\nFAIL: test_vip_with_coupon_calculation (tests.test_service.TestPricingService.test_vip_with_coupon_calculation)\n------------",
+  "error_snippet": "\n..F\n======================================================================\nFAIL: test_vip_with_coupon_calculation (tests.test_service.TestPricingService.test_vip_with_coupon_calculation)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File",
+  "run_method": "llm_agent",
+  "note": "",
+  "inspect_cmd": "",
+  "elapsed_seconds": 3.95
+}

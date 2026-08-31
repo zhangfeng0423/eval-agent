@@ -1,0 +1,185 @@
+{
+  "case_id": "case_04",
+  "task_type": "generation",
+  "total_elapsed_seconds": 0.0,
+  "run_result": {
+    "status": "success",
+    "attempt_count": 1,
+    "exit_code": 0,
+    "log_summary": "Financial batch computation completed. Generated report_2026.csv (10,000 records).",
+    "error_snippet": "",
+    "run_method": "llm_agent",
+    "note": "",
+    "inspect_cmd": "",
+    "elapsed_seconds": 8.6
+  },
+  "accuracy_result": {
+    "status": "success",
+    "overall_grade": 4,
+    "overall_score": 85.0,
+    "dimensions": [
+      {
+        "dimension": "万条数据计算一致性",
+        "grade": 4,
+        "score": 85.0,
+        "reason": "98.5% 账单金额计算完全精确一致，仅存在千分之二浮点微差。"
+      },
+      {
+        "dimension": "多币种跨国税率换算",
+        "grade": 4,
+        "score": 85.0,
+        "reason": "四舍五入规则在个别边际场景与国家标准有 0.002 浮动。"
+      }
+    ],
+    "strengths": [
+      "大数据量批量计算吞吐极快",
+      "准确率达到 98.5%"
+    ],
+    "weaknesses": [
+      "微小浮点精度丢失"
+    ],
+    "repair_suggestions": [
+      "使用 decimal.Decimal 替换 float 进行金融精度计费"
+    ],
+    "raw_output": ""
+  },
+  "quality_result": {
+    "status": "success",
+    "overall_grade": 4,
+    "overall_score": 88.0,
+    "dimensions": [
+      {
+        "name": "架构与工程规范",
+        "grade": 5,
+        "score": 100.0,
+        "comment": "函数式流式处理，无内存泄漏。"
+      },
+      {
+        "name": "运行时健壮性",
+        "grade": 4,
+        "score": 80.0,
+        "comment": "内存占用平稳在 80MB 内，零 OOM 风险。"
+      },
+      {
+        "name": "性能与安全防线",
+        "grade": 4,
+        "score": 85.0,
+        "comment": "支持多线程分块并发计算。"
+      },
+      {
+        "name": "交付体验与可观测性",
+        "grade": 4,
+        "score": 85.0,
+        "comment": "附带完整的 CSV 计算对比报告。"
+      }
+    ],
+    "code_structure_analysis": "",
+    "strengths": [
+      "单机万行数据处理仅耗时 8.6 秒"
+    ],
+    "weaknesses": [],
+    "repair_suggestions": [
+      "浮点精度替换为 Decimal 标准类型"
+    ],
+    "raw_output": ""
+  },
+  "csv_diff_result": {
+    "status": "success",
+    "matched_ratio": 0.985,
+    "total_rows": 10000,
+    "matched_rows": 9850,
+    "diff_rows": 150,
+    "diff_summary": "",
+    "missing_items": [],
+    "unexpected_items": [],
+    "details": {
+      "discrepancies": [
+        {
+          "row": 42,
+          "field": "tax_rate",
+          "expected": "0.060",
+          "actual": "0.062"
+        }
+      ]
+    },
+    "raw_output": ""
+  },
+  "patch_result": null,
+  "human_review": null,
+  "trace_metrics": {
+    "model_name": "GLM-5.2",
+    "total_elapsed_seconds": 8.6,
+    "total_input_tokens": 1800,
+    "total_output_tokens": 420,
+    "total_tokens": 2220,
+    "cache_hit_input_tokens": 1400,
+    "cache_miss_input_tokens": 400,
+    "cache_creation_input_tokens": 0,
+    "cache_hit_rate": 0.778,
+    "total_cost_usd": 0.00062,
+    "spans": [
+      {
+        "name": "1. 静态代码分析",
+        "span_type": "static",
+        "status": "success",
+        "elapsed_seconds": 0.06,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0,
+        "details": "无坏依赖"
+      },
+      {
+        "name": "2. 真实沙箱批量数据生成",
+        "span_type": "sandbox",
+        "status": "success",
+        "elapsed_seconds": 6.1,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0,
+        "details": "生成 10,000 行报表"
+      },
+      {
+        "name": "3. CSV 数据流比对校验 (Diff)",
+        "span_type": "static",
+        "status": "success",
+        "elapsed_seconds": 0.45,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0,
+        "details": "匹配率 98.5%"
+      },
+      {
+        "name": "4. 双维度裁判客观打分",
+        "span_type": "llm_agent",
+        "status": "success",
+        "elapsed_seconds": 1.99,
+        "input_tokens": 1800,
+        "output_tokens": 420,
+        "total_tokens": 2220,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.00062,
+        "details": "定级 Grade 4 (88分)"
+      }
+    ]
+  },
+  "overall_verdict": "PASS",
+  "last_updated": "2026-08-31T06:12:54.815356Z"
+}

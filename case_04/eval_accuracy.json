@@ -1,0 +1,30 @@
+{
+  "status": "success",
+  "overall_grade": 4,
+  "overall_score": 85.0,
+  "dimensions": [
+    {
+      "dimension": "万条数据计算一致性",
+      "grade": 4,
+      "score": 85.0,
+      "reason": "98.5% 账单金额计算完全精确一致，仅存在千分之二浮点微差。"
+    },
+    {
+      "dimension": "多币种跨国税率换算",
+      "grade": 4,
+      "score": 85.0,
+      "reason": "四舍五入规则在个别边际场景与国家标准有 0.002 浮动。"
+    }
+  ],
+  "strengths": [
+    "大数据量批量计算吞吐极快",
+    "准确率达到 98.5%"
+  ],
+  "weaknesses": [
+    "微小浮点精度丢失"
+  ],
+  "repair_suggestions": [
+    "使用 decimal.Decimal 替换 float 进行金融精度计费"
+  ],
+  "raw_output": ""
+}

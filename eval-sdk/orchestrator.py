@@ -854,6 +854,11 @@ matched_ratio 必须是 0 到 1 之间的小数；status 只能是 success 或 f
         human_guidance: str = "",
     ) -> PatchVerificationResult:
         agent_def = get_auto_repair_agent(model=self.model_name)
+        # 自适应源码根：规范布局为 {case_dir}/mnt；若用户未按该约定组织（源码直接放在
+        # case 目录根，如 case_real/），回退到 case_dir 本身，避免修复 agent 被指向不存在的
+        # 目录而无法定位源码 / apply_patch 被 allowed_root 拒绝。
+        mnt_dir = Path(case_dir) / "mnt"
+        source_root = mnt_dir if mnt_dir.is_dir() else Path(case_dir)
         prompt = f"""
 请根据以下评测结果判断是否需要自动修复用例：{case_dir}
 
@@ -862,7 +867,7 @@ matched_ratio 必须是 0 到 1 之间的小数；status 只能是 success 或 f
 质量结果：{summary.quality_result.model_dump_json() if summary.quality_result else "null"}
 
         上层调用已明确授权本次修复。追加指导（可能为空）：{human_guidance or "无"}
-        只有在修复建议明确、补丁范围可控时才修改代码。目标源码位于 {case_dir}/mnt（请自行识别其实际子目录），不要修改 eval_*.json、trace_metrics.json 或 case_summary.json。
+        只有在修复建议明确、补丁范围可控时才修改代码。目标源码位于 {source_root}（请自行识别其实际子目录），不要修改 eval_*.json、trace_metrics.json 或 case_summary.json。
         修改后必须在本地沙箱中执行与项目相关的最小回归检查，并如实记录是否真的写入了源码、是否复测通过。最终只返回一个 JSON 对象，包含 patch_applied、run_after_patch_passed、score_improved、old_score、new_score、verification_log。
 """.strip()
 
@@ -872,7 +877,7 @@ matched_ratio 必须是 0 到 1 之间的小数；status 只能是 success 或 f
             agent_def,
             PatchVerificationResult,
             include_mcp=True,
-            patch_root=str(Path(case_dir) / "mnt"),
+            patch_root=str(source_root),
         )
         self._record_trace(trace, "auto_repair", response)
         try:

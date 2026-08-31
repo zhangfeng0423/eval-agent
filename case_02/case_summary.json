@@ -1,0 +1,202 @@
+{
+  "case_id": "case_02",
+  "task_type": "generation",
+  "total_elapsed_seconds": 0.0,
+  "run_result": {
+    "status": "fail",
+    "attempt_count": 2,
+    "exit_code": 1,
+    "log_summary": "FastAPI application failed during startup: requests.exceptions.ConnectTimeout in event loop.",
+    "error_snippet": "requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='api.market.example.com', port=443): Max retries exceeded with url: /v1/quotes (Caused by ConnectTimeoutError: Request timed out after 30000ms)",
+    "run_method": "llm_agent",
+    "note": "",
+    "inspect_cmd": "",
+    "elapsed_seconds": 32.4
+  },
+  "accuracy_result": {
+    "status": "success",
+    "overall_grade": 3,
+    "overall_score": 60.0,
+    "dimensions": [
+      {
+        "dimension": "核心行情拉取逻辑",
+        "grade": 4,
+        "score": 80.0,
+        "reason": "股票代码解析与 JSON 字段提取正确。"
+      },
+      {
+        "dimension": "跨期环比与差额计算",
+        "grade": 2,
+        "score": 40.0,
+        "reason": "未处理非交易日休市与停牌股票的边界空值兜底。"
+      },
+      {
+        "dimension": "异常容错与超时防御",
+        "grade": 1,
+        "score": 20.0,
+        "reason": "网络请求堵塞直接导致 ASGI 事件循环饥饿崩溃。"
+      }
+    ],
+    "strengths": [
+      "行情字段解析算法实现完整"
+    ],
+    "weaknesses": [
+      "缺少非交易日空值兜底",
+      "未对外部行情 API 进行超时防护"
+    ],
+    "repair_suggestions": [
+      "增加 pandas 环比差额空值填充",
+      "在网络调用层增加超时捕获与重试机制"
+    ],
+    "raw_output": ""
+  },
+  "quality_result": {
+    "status": "fail",
+    "overall_grade": 2,
+    "overall_score": 40.0,
+    "dimensions": [
+      {
+        "name": "架构与工程规范",
+        "grade": 3,
+        "score": 60.0,
+        "comment": "模块划分尚可，但缺少服务层隔离。"
+      },
+      {
+        "name": "运行时健壮性",
+        "grade": 1,
+        "score": 20.0,
+        "comment": "第42行 requests.post 未设置 timeout，同步阻塞导致死锁崩溃。"
+      },
+      {
+        "name": "性能与安全防线",
+        "grade": 2,
+        "score": 40.0,
+        "comment": "同步 I/O 阻塞了 FastAPI 主事件循环，并发吞吐量归零。"
+      },
+      {
+        "name": "交付体验与可观测性",
+        "grade": 2,
+        "score": 40.0,
+        "comment": "缺少降级兜底日志与重试告警。"
+      }
+    ],
+    "code_structure_analysis": "",
+    "strengths": [
+      "路由层与工具层初步分离"
+    ],
+    "weaknesses": [
+      "requests.post 裸调用引发主事件循环死锁",
+      "缺少异步非阻塞网络封装"
+    ],
+    "repair_suggestions": [
+      "将同步 requests.post 改写为 httpx.AsyncClient 异步非阻塞调用",
+      "设置 timeout=15 并增加 3 次指数退避重试与降级缓存兜底"
+    ],
+    "raw_output": ""
+  },
+  "csv_diff_result": null,
+  "patch_result": {
+    "patch_applied": true,
+    "run_after_patch_passed": true,
+    "score_improved": true,
+    "old_score": 40.0,
+    "new_score": 85.0,
+    "old_grade": 2,
+    "new_grade": 4,
+    "root_cause": "第42行 requests.post 同步阻塞调用导致 FastAPI 主事件循环死锁，网络超时后崩溃",
+    "patch_summary": "重构为 httpx.AsyncClient 异步非阻塞调用，注入 timeout=15.0s 与 3 次指数退避重试，补充 DataFrame 缺失值 fillna(0.0) 兜底",
+    "verification_log": "[AI-Self-Healing-Agent] 收到专家修复授权，开始执行代码手术...\n1. 缺陷深度分析：定位 stock_service.py 第 42 行同步阻塞请求引发死锁\n2. 代码手术重构：\n   - 替换 requests.post -> await client.post (httpx.AsyncClient)\n   - 注入 timeout=15.0s 与 tenacity 3 次指数退避重试\n   - 补充 DataFrame 缺失值 fillna(0.0) 兜底\n3. 沙箱环境复测：\n   pytest tests/test_stock.py --timeout=20\n   ====== 8 passed, 0 failed in 2.14s ======\n4. 复测结果：沙箱运行验证全部通过！工程质量评级由 Grade 2 (40分) 跃升为 Grade 4 (85分)！"
+  },
+  "human_review": null,
+  "trace_metrics": {
+    "model_name": "DeepSeek-V4-Flash",
+    "total_elapsed_seconds": 14.8,
+    "total_input_tokens": 3200,
+    "total_output_tokens": 850,
+    "total_tokens": 4050,
+    "cache_hit_input_tokens": 2400,
+    "cache_miss_input_tokens": 800,
+    "cache_creation_input_tokens": 0,
+    "cache_hit_rate": 0.75,
+    "total_cost_usd": 0.00115,
+    "spans": [
+      {
+        "name": "1. 静态代码语法分析",
+        "span_type": "static",
+        "status": "success",
+        "elapsed_seconds": 0.09,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0,
+        "details": "检测到同步 requests 调用"
+      },
+      {
+        "name": "2. 真实沙箱启动验证 (初次)",
+        "span_type": "sandbox",
+        "status": "fail",
+        "elapsed_seconds": 5.2,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0,
+        "details": "ConnectTimeout 导致退出码 1"
+      },
+      {
+        "name": "3. AI 裁判缺陷定位与 RCA 归因",
+        "span_type": "llm_agent",
+        "status": "success",
+        "elapsed_seconds": 2.4,
+        "input_tokens": 1400,
+        "output_tokens": 380,
+        "total_tokens": 1780,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.00045,
+        "details": "定级 Grade 2 (40分)，产出自愈方案"
+      },
+      {
+        "name": "4. 意图驱动代码自愈手术 (AI真改码)",
+        "span_type": "llm_agent",
+        "status": "success",
+        "elapsed_seconds": 4.5,
+        "input_tokens": 1800,
+        "output_tokens": 470,
+        "total_tokens": 2270,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0007,
+        "details": "重构为 httpx 异步客户端"
+      },
+      {
+        "name": "5. 沙箱自动化二次复测",
+        "span_type": "sandbox",
+        "status": "success",
+        "elapsed_seconds": 2.61,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cache_hit_input_tokens": 0,
+        "cache_miss_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_hit_rate": null,
+        "cost_usd": 0.0,
+        "details": "8/8 测试通过，提分至 85分！"
+      }
+    ]
+  },
+  "overall_verdict": "PASS",
+  "last_updated": "2026-08-31T06:12:54.814380Z"
+}

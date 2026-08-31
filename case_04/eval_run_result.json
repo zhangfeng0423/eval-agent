@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "attempt_count": 1,
+  "exit_code": 0,
+  "log_summary": "Financial batch computation completed. Generated report_2026.csv (10,000 records).",
+  "error_snippet": "",
+  "run_method": "llm_agent",
+  "note": "",
+  "inspect_cmd": "",
+  "elapsed_seconds": 8.6
+}

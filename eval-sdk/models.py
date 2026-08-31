@@ -111,9 +111,13 @@ class QualityResult(BaseModel):
 class CsvDiffResult(BaseModel):
     status: str = "success"
     matched_ratio: float = 1.0
+    total_rows: int = 0
+    matched_rows: int = 0
+    diff_rows: int = 0
     diff_summary: str = ""
     missing_items: List[str] = Field(default_factory=list)
     unexpected_items: List[str] = Field(default_factory=list)
+    details: Dict[str, Any] = Field(default_factory=dict)
     raw_output: str = ""
 
 
@@ -123,6 +127,10 @@ class PatchVerificationResult(BaseModel):
     score_improved: bool = False
     old_score: Optional[float] = None
     new_score: Optional[float] = None
+    old_grade: Optional[int] = None
+    new_grade: Optional[int] = None
+    root_cause: str = ""
+    patch_summary: str = ""
     verification_log: str = ""
 
 
@@ -155,6 +163,13 @@ class HumanCalibrationRequest(BaseModel):
 class RepairAuthorizationRequest(BaseModel):
     authorized: bool = False
     human_guidance: str = ""
+
+
+class FolderEvaluationRequest(BaseModel):
+    folder_path: str
+    model: Optional[str] = "deepseek-v4-flash"
+    enable_auto_repair: bool = False
+    custom_name: Optional[str] = None
 
 
 class TraceSpan(BaseModel):

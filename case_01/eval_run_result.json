@@ -1,11 +1,11 @@
 {
-  "status": "success",
+  "status": "fail",
   "attempt_count": 1,
-  "exit_code": 0,
-  "log_summary": "Maven build succeeded. Spring Boot application smoke tests passed on port 8080.",
-  "error_snippet": "",
-  "run_method": "llm_agent",
-  "note": "",
-  "inspect_cmd": "",
-  "elapsed_seconds": 18.2
+  "exit_code": 1,
+  "log_summary": "case_01 目录仅含 6 个评测结果 JSON（eval_run_result.json、eval_accuracy.json、eval_quality.json、human_review.json、trace_metrics.json、case_summary.json），不存在 task.md、被测源码与任何工程清单（pom.xml/build.gradle/requirements.txt/package.json 均缺失）。git 历史确认 case_01 从首次提交起只有评测结果文件，从未包含源码；README 约定被测源码位于 case_<ID>/mnt/，但全工作区无 mnt/ 目录、无 .java 文件、无 Maven 工程。在沙箱中执行标准构建命令 mvn test 失败（目录无 POM），Python 测试入口亦不存在，真实构建/测试/启动验证无法执行。",
+  "error_snippet": "[ERROR] The goal you specified requires a project to execute but there is no POM in this directory (/Users/meituan/Desktop/work/0830/eval-agent/case_01). Please verify you invoked Maven from the correct directory. -> [Help 1] (MAVEN_EXIT=1)",
+  "run_method": "sandbox_exec",
+  "note": "case_01 是评测结果展示目录而非被测项目：task.md 不存在，无任何源码/依赖清单。评测结果文件中记载的\"Maven 24/24 测试通过 / Spring Boot 8080\"属历史评测输出，按要求未作为源码依据。已穷尽合理入口（工作区全量搜索 mnt/、pom.xml、*.java；git 历史核查；沙箱实际执行 mvn test）后确认无可构建对象，故判定 fail。若待测源码本应存在，请确认其挂载路径（约定为 case_01/mnt/）是否缺失或未同步。",
+  "inspect_cmd": "ls -la /Users/meituan/Desktop/work/0830/eval-agent/case_01 && find /Users/meituan/Desktop/work/0830/eval-agent -type d -name mnt; find /Users/meituan/Desktop/work/0830/eval-agent -name pom.xml -o -name '*.java'",
+  "elapsed_seconds": 120.0
 }

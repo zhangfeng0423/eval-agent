@@ -7,18 +7,18 @@
       "dimension": "核心功能完整性",
       "grade": 5,
       "score": 100.0,
-      "reason": "完整实现了用户登录鉴权与Token拦截。"
+      "reason": "完整实现了用户登录鉴权、Token 刷新与权限拦截器。"
     },
     {
       "dimension": "边界防御与安全性",
       "grade": 5,
       "score": 100.0,
-      "reason": "密码使用强加盐BCrypt，无明文泄露。"
+      "reason": "密码使用强加盐 BCrypt，无任何明文或空指针泄露风险。"
     }
   ],
   "strengths": [
-    "RESTful分层设计严谨",
-    "JWT加解密算法最优"
+    "RESTful 分层设计严谨规范",
+    "JWT 双 Token 刷新机制最优"
   ],
   "weaknesses": [],
   "repair_suggestions": [],

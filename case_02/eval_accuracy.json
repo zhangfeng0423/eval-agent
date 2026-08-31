@@ -4,27 +4,34 @@
   "overall_score": 60.0,
   "dimensions": [
     {
-      "dimension": "核心业务功能",
-      "grade": 3,
-      "score": 60.0,
-      "reason": "缺少平安银行跨年度报表比对计算。"
+      "dimension": "核心行情拉取逻辑",
+      "grade": 4,
+      "score": 80.0,
+      "reason": "股票代码解析与 JSON 字段提取正确。"
     },
     {
-      "dimension": "边界与异常容错",
+      "dimension": "跨期环比与差额计算",
       "grade": 2,
       "score": 40.0,
-      "reason": "网络请求堵塞直接导致服务宕机。"
+      "reason": "未处理非交易日休市与停牌股票的边界空值兜底。"
+    },
+    {
+      "dimension": "异常容错与超时防御",
+      "grade": 1,
+      "score": 20.0,
+      "reason": "网络请求堵塞直接导致 ASGI 事件循环饥饿崩溃。"
     }
   ],
   "strengths": [
-    "股票代码识别准确"
+    "行情字段解析算法实现完整"
   ],
   "weaknesses": [
-    "未处理网络超时与非交易日容错"
+    "缺少非交易日空值兜底",
+    "未对外部行情 API 进行超时防护"
   ],
   "repair_suggestions": [
-    "增加 pandas 环比差额计算",
-    "网络请求层增加超时捕获与重试机制"
+    "增加 pandas 环比差额空值填充",
+    "在网络调用层增加超时捕获与重试机制"
   ],
   "raw_output": ""
 }

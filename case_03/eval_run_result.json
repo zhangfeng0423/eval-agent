@@ -3,7 +3,7 @@
   "attempt_count": 1,
   "exit_code": 126,
   "log_summary": "FAST-FAIL: Static Guardrail intercepted blacklisted dependency 'event-stream@3.3.6' (Known Bitcoin Wallet Exploit).",
-  "error_snippet": "GuardrailViolation: Dependency 'event-stream@3.3.6' failed safety check. Sandbox execution skipped to prevent infection.",
+  "error_snippet": "GuardrailViolation: Dependency 'event-stream@3.3.6' failed security safety check. Dangerous sandbox execution skipped to protect host environment.",
   "run_method": "static_analysis",
   "note": "",
   "inspect_cmd": "",

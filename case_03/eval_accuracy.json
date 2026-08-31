@@ -1,0 +1,21 @@
+{
+  "status": "fail",
+  "overall_grade": 1,
+  "overall_score": 0.0,
+  "dimensions": [
+    {
+      "dimension": "安全性门禁",
+      "grade": 1,
+      "score": 0.0,
+      "reason": "代码包含恶意供应链攻击后门，触发最高级别红线拦截。"
+    }
+  ],
+  "strengths": [],
+  "weaknesses": [
+    "存在已知后门投毒恶意包"
+  ],
+  "repair_suggestions": [
+    "从 package.json 移除 event-stream@3.3.6 并替换为官方无害版本"
+  ],
+  "raw_output": ""
+}

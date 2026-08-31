@@ -25,8 +25,8 @@ pipeline:
 # 2. Sandbox Isolation Environment
 # ------------------------------------------------------------------------------
 sandbox:
-  # 沙箱类型: utm (Ubuntu VM SSH), orbstack (容器), local (本地宿主机)
-  type: "utm"
+  # 沙箱类型: local (本机, 默认), utm (Ubuntu VM SSH), orbstack (容器)
+  type: "local"
   
   # UTM 虚拟机 SSH 配置（当 type 为 utm 时生效）
   utm:

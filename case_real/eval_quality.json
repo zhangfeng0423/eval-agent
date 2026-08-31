@@ -1,0 +1,44 @@
+{
+  "status": "fail",
+  "overall_grade": 2,
+  "overall_score": 40.0,
+  "dimensions": [
+    {
+      "name": "架构与工程规范",
+      "grade": 3,
+      "score": 60.0,
+      "comment": "模块分层清晰，但领域服务中存在业务与网络 I/O 混合耦合。"
+    },
+    {
+      "name": "运行时健壮性",
+      "grade": 1,
+      "score": 20.0,
+      "comment": "沙箱真实测试执行失败：捕获 AssertionError 断言异常。"
+    },
+    {
+      "name": "性能与安全防线",
+      "grade": 2,
+      "score": 40.0,
+      "comment": "存在同步 requests 网络裸调用，高并发下将阻塞工作线程。"
+    },
+    {
+      "name": "交付体验与可观测性",
+      "grade": 2,
+      "score": 40.0,
+      "comment": "缺少重试与降级告警日志。"
+    }
+  ],
+  "code_structure_analysis": "",
+  "strengths": [
+    "模块职责初步划分"
+  ],
+  "weaknesses": [
+    "计费断言失败导致沙箱构建阻断",
+    "同步 I/O 阻塞风险"
+  ],
+  "repair_suggestions": [
+    "修复计费折扣公式",
+    "网络调用升级为 httpx 异步非阻塞客户端"
+  ],
+  "raw_output": ""
+}
