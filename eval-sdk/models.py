@@ -129,17 +129,23 @@ class PatchVerificationResult(BaseModel):
 class HumanReviewEntry(BaseModel):
     case_id: str
     reviewer: str = "expert"
-    original_score: float
-    calibrated_score: float
+    original_score: float = 0.0
+    calibrated_score: float = 0.0
     original_grade: int = 4
     calibrated_grade: int = 4
+    original_accuracy_grade: Optional[int] = None
+    calibrated_accuracy_grade: Optional[int] = None
+    original_quality_grade: Optional[int] = None
+    calibrated_quality_grade: Optional[int] = None
     is_agreed_with_ai: bool = True
     expert_feedback: str = ""
     created_at: datetime = Field(default_factory=utc_now)
 
 
 class HumanCalibrationRequest(BaseModel):
-    calibrated_grade: int = Field(default=4, ge=1, le=5)
+    calibrated_grade: Optional[int] = Field(default=None, ge=1, le=5)
+    calibrated_accuracy_grade: Optional[int] = Field(default=None, ge=1, le=5)
+    calibrated_quality_grade: Optional[int] = Field(default=None, ge=1, le=5)
     calibrated_score: Optional[float] = None
     is_agreed_with_ai: bool = True
     expert_feedback: str = ""

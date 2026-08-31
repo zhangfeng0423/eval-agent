@@ -369,16 +369,23 @@ async def get_case(case_id: str):
 
 @app.post("/api/case/{case_id}/calibrate")
 async def calibrate_case(case_id: str, req: HumanCalibrationRequest):
-    """Saves human expert review with 1-5 Grade calibration and appends to DPO dataset."""
+    """Saves human expert review with Dual-Dimension (Accuracy & Quality) calibration and appends to DPO dataset."""
     case_dir = WORK_DIR / case_id
     if not case_dir.exists():
         raise HTTPException(status_code=404, detail="Case directory not found")
 
+    acc_res = AtomicJsonStorage.load(str(case_dir / "eval_accuracy.json"), AccuracyResult)
     qua_res = AtomicJsonStorage.load(str(case_dir / "eval_quality.json"), QualityResult)
+
+    orig_acc_grade = acc_res.overall_grade if acc_res else None
+    orig_qua_grade = qua_res.overall_grade if qua_res else None
     orig_score = qua_res.overall_score if qua_res else 0.0
     orig_grade = qua_res.overall_grade if qua_res else 3
 
-    calib_score = req.calibrated_score if req.calibrated_score is not None else (req.calibrated_grade * 20.0)
+    calib_acc_grade = req.calibrated_accuracy_grade or orig_acc_grade or 4
+    calib_qua_grade = req.calibrated_quality_grade or orig_qua_grade or 4
+    calib_grade = req.calibrated_grade or min(calib_acc_grade, calib_qua_grade)
+    calib_score = req.calibrated_score if req.calibrated_score is not None else (calib_grade * 20.0)
 
     entry = HumanReviewEntry(
         case_id=case_id,
@@ -386,7 +393,11 @@ async def calibrate_case(case_id: str, req: HumanCalibrationRequest):
         original_score=orig_score,
         calibrated_score=calib_score,
         original_grade=orig_grade,
-        calibrated_grade=req.calibrated_grade,
+        calibrated_grade=calib_grade,
+        original_accuracy_grade=orig_acc_grade,
+        calibrated_accuracy_grade=calib_acc_grade,
+        original_quality_grade=orig_qua_grade,
+        calibrated_quality_grade=calib_qua_grade,
         is_agreed_with_ai=req.is_agreed_with_ai,
         expert_feedback=req.expert_feedback
     )
@@ -397,12 +408,15 @@ async def calibrate_case(case_id: str, req: HumanCalibrationRequest):
     with open(DATASET_EXPORT_FILE, "a", encoding="utf-8") as f:
         export_payload = {
             "case_id": case_id,
-            "ai_evaluation": qua_res.model_dump() if qua_res else {},
+            "ai_evaluation": {
+                "accuracy": acc_res.model_dump() if acc_res else {},
+                "quality": qua_res.model_dump() if qua_res else {}
+            },
             "human_calibration": entry.model_dump(mode="json")
         }
         f.write(json.dumps(export_payload, ensure_ascii=False) + "\n")
 
-    return {"status": "success", "message": f"Case {case_id} calibrated to Grade {req.calibrated_grade} ({calib_score}分)."}
+    return {"status": "success", "message": f"Case {case_id} calibrated (Acc: G{calib_acc_grade}, Qua: G{calib_qua_grade}, Overall: G{calib_grade})."}
 
 
 @app.post("/api/case/{case_id}/execute-repair")
@@ -477,729 +491,590 @@ async def execute_repair(case_id: str, req: RepairAuthorizationRequest):
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
     """Renders the comprehensive, high-credibility 5-Tier Grade HITL interactive web console with Model Arena."""
-    html = """<!DOCTYPE html>
+    html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eval-Agent HITL 深度评测与多模型竞技场控制台</title>
-    <style>
-        :root {
-            --bg-primary: #070d19;
-            --bg-sidebar: #0f172a;
-            --bg-card: #1e293b;
-            --bg-card-hover: #334155;
-            --text-primary: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent-blue: #38bdf8;
-            --accent-green: #10b981;
-            --accent-yellow: #f59e0b;
-            --accent-orange: #f97316;
-            --accent-purple: #c084fc;
-            --accent-red: #ef4444;
-            --border-color: #334155;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; display: flex; flex-direction: column; }
-        
-        /* Top App Navigation Bar */
-        .top-navbar { height: 60px; background: #0f172a; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; }
-        .logo-area { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: bold; color: var(--accent-blue); }
-        .nav-switch { display: flex; background: #070d19; border-radius: 8px; padding: 4px; border: 1px solid var(--border-color); }
-        .nav-switch-btn { padding: 8px 16px; border-radius: 6px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; background: transparent; color: var(--text-muted); transition: all 0.2s; }
-        .nav-switch-btn.active { background: var(--accent-blue); color: #000; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eval-Agent</title>
+<style>
+:root{--bg:#09090b;--bg-elev:#131316;--bg-hover:#1a1a1e;--bg-inset:#07070a;--text:#e4e4e7;--text-dim:#a1a1aa;--text-faint:#52525b;--accent:#3b82f6;--border:rgba(255,255,255,0.06);--border-mid:rgba(255,255,255,0.10);--pass:#22c55e;--fail:#ef4444;--warn:#f59e0b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
+code,pre,.mono{font-family:"SF Mono","JetBrains Mono",Consolas,monospace}
 
-        .app-body { display: flex; flex: 1; overflow: hidden; }
+/* Layout */
+.top-nav{height:52px;background:var(--bg-elev);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 20px;position:sticky;top:0;z-index:100}
+.logo{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.logo svg{width:16px;height:16px;color:var(--accent)}
+.nav-right{display:flex;align-items:center;gap:12px}
+.case-select{background:var(--bg-inset);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;cursor:pointer;outline:none}
+.case-select:focus{border-color:var(--accent)}
+.main{flex:1;overflow-y:auto;padding:20px;max-width:1200px;margin:0 auto;width:100%}
 
-        /* Sidebar */
-        .sidebar { width: 340px; background: var(--bg-sidebar); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
-        .sidebar-header { padding: 16px 20px; border-bottom: 1px solid var(--border-color); }
-        .case-list { flex: 1; overflow-y: auto; padding: 12px; }
-        .case-item { padding: 14px; border-radius: 8px; background: var(--bg-card); margin-bottom: 10px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
-        .case-item:hover, .case-item.active { border-color: var(--accent-blue); background: var(--bg-card-hover); }
-        .case-item-title { font-weight: 600; display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
-        
-        /* Grade Badges */
-        .grade-badge { padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-        .grade-5 { background: #065f46; color: #34d399; }
-        .grade-4 { background: #0c4a6e; color: #38bdf8; }
-        .grade-3 { background: #78350f; color: #fbbf24; }
-        .grade-2 { background: #7c2d12; color: #fb923c; }
-        .grade-1 { background: #7f1d1d; color: #f87171; }
-        
-        /* Main Workspace */
-        .main-content { flex: 1; overflow-y: auto; padding: 24px 32px; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .header h1 { font-size: 22px; }
-        
-        /* Metric Grid */
-        .grid-4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 20px; }
-        .card { background: var(--bg-card); border-radius: 12px; padding: 18px 20px; border: 1px solid var(--border-color); }
-        .card-label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
-        .card-value { font-size: 22px; font-weight: bold; display: flex; align-items: center; gap: 8px; }
+/* Grid */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid-4{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+@media(max-width:768px){.grid-2{grid-template-columns:1fr}}
 
-        /* Navigation Tabs */
-        .tab-nav { display: flex; gap: 8px; border-bottom: 1px solid var(--border-color); margin-bottom: 20px; }
-        .tab-btn { padding: 10px 16px; background: transparent; border: none; color: var(--text-muted); font-size: 13px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
-        .tab-btn:hover { color: var(--text-primary); }
-        .tab-btn.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
+/* Cards */
+.metric-card{background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
+.metric-label{font-size:11px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em}
+.metric-value{font-size:22px;font-weight:700;margin-top:4px}
+.metric-sub{font-size:11px;color:var(--text-faint);margin-top:2px}
 
-        /* Panels & Tables */
-        .panel { background: var(--bg-card); border-radius: 12px; padding: 22px; border: 1px solid var(--border-color); margin-bottom: 20px; }
-        .panel-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; color: var(--accent-blue); display: flex; align-items: center; justify-content: space-between; }
-        
-        .dim-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
-        .dim-table th, .dim-table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border-color); }
-        .dim-table th { color: var(--text-muted); font-size: 12px; background: #0b1120; }
+.panel{background:var(--bg-elev);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.panel-head{padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text-dim);display:flex;align-items:center;justify-content:space-between}
+.panel-body{padding:16px;font-size:13px;line-height:1.6;color:var(--text)}
 
-        .tag-list { list-style: none; }
-        .tag-list li { padding: 10px 14px; background: #0b1120; border-radius: 6px; margin-bottom: 8px; font-size: 13px; border-left: 3px solid var(--accent-blue); line-height: 1.5; }
-        .tag-list.weakness li { border-left-color: var(--accent-red); }
-        .tag-list.suggestion li { border-left-color: var(--accent-green); }
+/* Badges */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.02em}
+.badge-pass{background:rgba(34,197,94,0.12);color:var(--pass)}
+.badge-fail{background:rgba(239,68,68,0.12);color:var(--fail)}
+.badge-grade{background:var(--bg-inset);color:var(--text-dim);border:1px solid var(--border)}
+.badge-warn{background:rgba(245,158,11,0.12);color:var(--warn)}
 
-        .latency-bar-bg { background: #0f172a; height: 8px; border-radius: 4px; overflow: hidden; width: 100%; margin-top: 6px; }
-        .latency-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple)); }
-        .terminal-box { background: #000; border-radius: 8px; padding: 16px; font-family: "SF Mono", Consolas, Monaco, monospace; font-size: 12px; color: #34d399; overflow-x: auto; line-height: 1.6; border: 1px solid #1e293b; max-height: 280px; overflow-y: auto; }
+/* Score bar */
+.score-row{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.score-label{font-size:12px;color:var(--text-faint);width:120px;flex-shrink:0}
+.score-bar{flex:1;height:6px;background:var(--bg-inset);border-radius:3px;overflow:hidden}
+.score-fill{height:100%;border-radius:3px;transition:width .3s}
+.score-val{font-size:12px;font-weight:600;width:40px;text-align:right;flex-shrink:0}
 
-        .form-group { margin-bottom: 14px; }
-        label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
-        input, textarea, select { width: 100%; background: #0b1120; border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; color: #fff; font-size: 14px; }
-        .btn { padding: 10px 18px; border-radius: 6px; font-weight: 600; cursor: pointer; border: none; font-size: 14px; transition: opacity 0.2s; }
-        .btn:hover { opacity: 0.9; }
-        .btn-primary { background: var(--accent-blue); color: #000; }
-        .btn-success { background: var(--accent-green); color: #fff; }
+/* Dim table */
+.dim-table{width:100%;border-collapse:collapse;font-size:12px}
+.dim-table th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--text-faint);text-transform:uppercase}
+.dim-table td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+.dim-table tr:last-child td{border-bottom:none}
 
-        /* Arena Specific Styles */
-        .arena-rank-1 { color: #f59e0b; font-weight: bold; font-size: 16px; }
-        .arena-rank-2 { color: #94a3b8; font-weight: bold; font-size: 16px; }
-        .arena-rank-3 { color: #b45309; font-weight: bold; font-size: 16px; }
-    </style>
+/* Tag list */
+.tag-list{list-style:none}
+.tag-list li{padding:8px 12px;background:var(--bg-inset);border-radius:6px;margin-bottom:6px;font-size:12px;border-left:3px solid var(--border-mid);line-height:1.5}
+.tag-list.weakness li{border-left-color:var(--fail)}
+.tag-list.suggestion li{border-left-color:var(--accent)}
+.tag-list.strength li{border-left-color:var(--pass)}
+
+/* Terminal */
+.terminal{background:#000;border:1px solid var(--border);border-radius:6px;padding:14px;font-family:"SF Mono",Consolas,monospace;font-size:12px;color:#a1a1aa;overflow-x:auto;line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap}
+
+/* Trace waterfall */
+.trace-table{width:100%;border-collapse:collapse;font-size:12px}
+.trace-table th{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:var(--text-faint)}
+.trace-table td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+.latency-bar-bg{background:var(--bg-inset);height:5px;border-radius:3px;overflow:hidden;margin-top:4px}
+.latency-bar-fill{height:100%;background:var(--accent);border-radius:3px}
+
+/* Forms */
+.form-group{margin-bottom:12px}
+.form-label{display:block;font-size:12px;color:var(--text-faint);margin-bottom:4px}
+.form-input,.form-select,.form-textarea{width:100%;background:var(--bg-inset);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;outline:none}
+.form-input:focus,.form-select:focus,.form-textarea:focus{border-color:var(--accent)}
+.form-textarea{min-height:60px;resize:vertical;font-family:inherit}
+.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;border-radius:6px;font-weight:600;font-size:12px;cursor:pointer;border:none;transition:all .15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{opacity:.9}
+.btn-ghost{background:var(--bg-hover);color:var(--text-dim);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--text)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:200}
+.modal-overlay.active{display:flex}
+.modal{background:var(--bg-elev);border:1px solid var(--border-mid);border-radius:10px;width:90%;max-width:560px;max-height:80vh;overflow-y:auto}
+.modal-head{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-title{font-size:14px;font-weight:600}
+.modal-close{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:18px;padding:4px}
+.modal-close:hover{color:var(--text)}
+.modal-body{padding:20px}
+
+/* Misc */
+.spinner{width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading{display:flex;align-items:center;justify-content:center;padding:40px;gap:10px;color:var(--text-faint);font-size:13px}
+.empty{text-align:center;padding:40px;color:var(--text-faint);font-size:13px}
+.toast{position:fixed;bottom:20px;right:20px;padding:10px 16px;border-radius:6px;font-size:13px;font-weight:500;z-index:300;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+.toast-success{background:var(--bg-elev);border:1px solid var(--border-mid);color:var(--text)}
+.toast-error{background:var(--bg-elev);border:1px solid var(--fail);color:var(--fail)}
+.divider{height:1px;background:var(--border);margin:16px 0}
+.section-gap{margin-bottom:20px}
+.pre-scroll{background:var(--bg-inset);border:1px solid var(--border);border-radius:6px;padding:12px;overflow-x:auto;font-size:12px;line-height:1.5}
+</style>
 </head>
 <body>
-    <!-- Top Navigation Bar -->
-    <div class="top-navbar">
-        <div class="logo-area">
-            <span>🛡️</span>
-            <span>Eval-Agent Studio</span>
-            <span style="font-size: 11px; background: #1e293b; color: var(--accent-blue); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border-color);">v2.0 Claude SDK</span>
-        </div>
-        <div class="nav-switch">
-            <button class="nav-switch-btn active" id="btnViewCases" onclick="switchView('cases')">📂 用例深度复核 (Case Inspector)</button>
-            <button class="nav-switch-btn" id="btnViewArena" onclick="switchView('arena')">🏆 多模型天梯竞技场 (Model Arena)</button>
-        </div>
-        <div>
-            <button class="btn btn-primary" style="font-size: 12px; padding: 6px 14px;" onclick="fetchCases()">🔄 刷新数据</button>
-        </div>
+
+<div class="top-nav">
+    <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        Eval-Agent
     </div>
+    <div class="nav-right">
+        <select class="case-select" id="case-select" onchange="loadCase(this.value)"><option value="">Select case...</option></select>
+    </div>
+</div>
 
-    <div class="app-body">
-        <!-- View 1: Case Inspector (Left Sidebar + Right Detail Workspace) -->
-        <div id="viewCaseInspector" style="display: flex; width: 100%; height: 100%;">
-            <div class="sidebar">
-                <div class="sidebar-header">
-                    <h3 style="font-size: 14px; color: var(--text-muted);">测试用例列表 (Evaluation Cases)</h3>
-                </div>
-                <div class="case-list" id="caseList"></div>
-            </div>
+<div class="main" id="main-content">
+    <div class="loading"><div class="spinner"></div>Loading...</div>
+</div>
 
-            <div class="main-content">
-                <div class="header">
-                    <div>
-                        <h1 id="currentCaseTitle">请在左侧选择测试用例</h1>
-                        <p id="currentCaseSub" style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">多维度客观定级、归因证据链与 Token 成本拓扑</p>
-                    </div>
-                </div>
-
-                <div id="caseDetails" style="display: none;">
-                    <!-- Top Metric Cards -->
-                    <div class="grid-4">
-                        <div class="card">
-                            <div class="card-label">运行验证 (Sandbox)</div>
-                            <div class="card-value" id="metricRun">--</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">功能准确性评级 (Accuracy)</div>
-                            <div class="card-value" id="metricAcc">--</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">工程质量健康度 (Quality)</div>
-                            <div class="card-value" id="metricQuality">--</div>
-                        </div>
-                        <div class="card">
-                            <div class="card-label">专家人机校准状态</div>
-                            <div class="card-value" id="metricReview" style="font-size: 16px; color: var(--accent-blue);">待复核</div>
-                        </div>
-                    </div>
-
-                    <!-- Tab Navigation -->
-                    <div class="tab-nav">
-                        <button class="tab-btn active" onclick="switchTab('tabAccuracy')">🎯 1. 功能准确性深度分析</button>
-                        <button class="tab-btn" onclick="switchTab('tabQuality')">🏗️ 2. 四大工程质量矩阵</button>
-                        <button class="tab-btn" onclick="switchTab('tabSandbox')">💻 3. 沙箱构建与真实日志</button>
-                        <button class="tab-btn" onclick="switchTab('tabRepair')">🛠️ 4. 方案授权与人机校准</button>
-                        <button class="tab-btn" onclick="switchTab('tabTrace')" style="color: var(--accent-purple);">📊 5. 全链路可观测性与 Token 消耗</button>
-                    </div>
-
-                    <!-- Tab 1: Functional Accuracy -->
-                    <div id="tabAccuracy" class="tab-pane">
-                        <div class="panel">
-                            <div class="panel-title">🎯 业务功能维度逐项评测表 (Accuracy Dimensions)</div>
-                            <table class="dim-table" id="accuracyDimTable">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 25%;">评测维度</th>
-                                        <th style="width: 15%;">评级 (Grade)</th>
-                                        <th>评定理由与判定依据</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                            <div class="panel">
-                                <div class="panel-title">💡 功能亮点与正确实现 (Strengths)</div>
-                                <ul class="tag-list" id="accStrengthsList"></ul>
-                            </div>
-                            <div class="panel">
-                                <div class="panel-title">⚠️ 功能缺失与业务逻辑漏洞 (Weaknesses)</div>
-                                <ul class="tag-list weakness" id="accWeaknessesList"></ul>
-                            </div>
-                        </div>
-
-                        <div class="panel">
-                            <div class="panel-title">📝 业务逻辑层修复建议 (Functional Repair Suggestions)</div>
-                            <ul class="tag-list suggestion" id="accSuggestionsList"></ul>
-                        </div>
-                    </div>
-
-                    <!-- Tab 2: Engineering Quality -->
-                    <div id="tabQuality" class="tab-pane" style="display: none;">
-                        <div class="panel">
-                            <div class="panel-title">🏗️ 四大工程质量支柱健康度 (4 Pillars Matrix)</div>
-                            <table class="dim-table" id="qualityDimTable">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 25%;">工程支柱</th>
-                                        <th style="width: 15%;">评级 (Grade)</th>
-                                        <th>架构师审查评语与证据</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                            <div class="panel">
-                                <div class="panel-title">💡 架构与工程优势 (Quality Strengths)</div>
-                                <ul class="tag-list" id="quaStrengthsList"></ul>
-                            </div>
-                            <div class="panel">
-                                <div class="panel-title">⚠️ 工程失分深度归因 (RCA Weaknesses)</div>
-                                <ul class="tag-list weakness" id="quaWeaknessesList"></ul>
-                            </div>
-                        </div>
-
-                        <div class="panel">
-                            <div class="panel-title">📝 架构重构与自愈建议 (Engineering Suggestions)</div>
-                            <ul class="tag-list suggestion" id="quaSuggestionsList"></ul>
-                        </div>
-                    </div>
-
-                    <!-- Tab 3: Sandbox Logs -->
-                    <div id="tabSandbox" class="tab-pane" style="display: none;">
-                        <div class="panel">
-                            <div class="panel-title">💻 沙箱编译与运行环境输出 (Terminal Output)</div>
-                            <div style="margin-bottom: 12px; font-size: 13px; color: var(--text-muted);" id="sandboxMeta"></div>
-                            <div class="terminal-box" id="sandboxLogBox"></div>
-                        </div>
-                    </div>
-
-                    <!-- Tab 4: Interactive Repair & Calibration -->
-                    <div id="tabRepair" class="tab-pane" style="display: none;">
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
-                            <!-- Left: Intent-Driven Auto-Repair -->
-                            <div class="panel">
-                                <div class="panel-title">
-                                    <span>🤖 意图驱动自愈：AI 修复方案授权</span>
-                                    <button class="btn btn-success" style="font-size: 12px; padding: 6px 14px;" onclick="executeRepair()">🟢 采纳方案并授权 AI 修复</button>
-                                </div>
-                                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
-                                    AI 裁判已针对业务缺陷与工程漏洞拟定方案。审阅通过后点击授权，系统将自动唤醒自愈 Agent 去修改代码并在沙箱中复测：
-                                </p>
-                                <div style="background: #0b1120; border-radius: 8px; padding: 14px; border: 1px solid var(--border-color); margin-bottom: 14px;">
-                                    <div style="font-size: 12px; color: var(--accent-blue); font-weight: bold; margin-bottom: 6px;">📋 拟定综合修复策略 (Proposed Strategy):</div>
-                                    <ul class="tag-list suggestion" id="combinedSuggestionsList"></ul>
-                                </div>
-                                <div class="form-group">
-                                    <label>（可选）人类专家追加指导指令 (Human Guidance)</label>
-                                    <textarea id="humanGuidance" rows="2" placeholder="例如：同意此方案，请将超时时间设置为 15s，并增加 3 次指数退避重试..."></textarea>
-                                </div>
-                            </div>
-
-                            <!-- Right: Human Calibration & DPO Export -->
-                            <div class="panel">
-                                <div class="panel-title">👨‍💻 专家双维度校准 (Active Calibration)</div>
-                                <div class="form-group">
-                                    <label>是否认同 AI 裁判评估？</label>
-                                    <select id="reviewAgree">
-                                        <option value="true">✅ 认同 AI 判定</option>
-                                        <option value="false">❌ AI 存在误判 / 过于严苛</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label>专家校准评级 (Grade 1 - 5)</label>
-                                    <select id="reviewGrade">
-                                        <option value="5">🟢 Grade 5 : A (卓越 - 100分 完美无瑕)</option>
-                                        <option value="4" selected>🟢 Grade 4 : B (良好 - 80分 主干优秀)</option>
-                                        <option value="3">🟡 Grade 3 : C (合格 - 60分 基本可用)</option>
-                                        <option value="2">🔴 Grade 2 : D (较差 - 40分 严重缺陷)</option>
-                                        <option value="1">🔴 Grade 1 : F (失败 - 20分 致命错误)</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label>专家纠错与校准备注 (将自动沉淀为 DPO 微调数据)</label>
-                                    <textarea id="reviewFeedback" rows="3" placeholder="例如：该业务逻辑在特定子模块中已有兜底，不属于缺失，上调至 Grade 4..."></textarea>
-                                </div>
-                                <button class="btn btn-primary" onclick="submitCalibration()">💾 提交校准并导出微调数据集</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Tab 5: Observability & Trace Waterfall -->
-                    <div id="tabTrace" class="tab-pane" style="display: none;">
-                        <div class="grid-4">
-                            <div class="card" style="border-color: var(--accent-purple);">
-                                <div class="card-label">本次评测单 Case 成本</div>
-                                <div class="card-value" id="traceCost" style="color: var(--accent-purple);">$0.0000</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" id="traceCostCny">≈ ¥0.00 RMB</div>
-                            </div>
-                            <div class="card">
-                                <div class="card-label">消耗总 Token 数 (Tokens)</div>
-                                <div class="card-value" id="traceTokens">0</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" id="traceTokenBreakdown">In: 0 | Out: 0</div>
-                            </div>
-                            <div class="card">
-                                <div class="card-label">输入缓存命中</div>
-                                <div class="card-value" id="traceCacheHit">N/A</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" id="traceCacheBreakdown">Hit: 0 | Miss: 0</div>
-                            </div>
-                            <div class="card">
-                                <div class="card-label">端到端全链路总耗时</div>
-                                <div class="card-value" id="traceLatency">0.0s</div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">包含真实沙箱与 LLM 判定</div>
-                            </div>
-                            <div class="card">
-                                <div class="card-label">驱动 LLM 基模</div>
-                                <div class="card-value" id="traceModel" style="font-size: 18px; color: var(--accent-blue);">Claude 3.7</div>
-                                <div style="font-size: 11px; color: #34d399; margin-top: 4px;">OpenTelemetry 协议就绪</div>
-                            </div>
-                        </div>
-
-                        <div class="panel">
-                            <div class="panel-title">
-                                <span>⏱️ Agent 执行时序与分阶段资源开销 (Trace Waterfall)</span>
-                                <span style="font-size: 12px; color: var(--accent-purple); background: #3b0764; padding: 3px 8px; border-radius: 4px;">📡 Langfuse / OTel Native</span>
-                            </div>
-                            <table class="dim-table" id="traceWaterfallTable">
-                                <thead>
-                                    <tr>
-                                        <th style="width: 32%;">Span 链路节点</th>
-                                        <th style="width: 14%;">耗时 (Latency)</th>
-                                        <th style="width: 18%;">Token 消耗 (In / Out)</th>
-                                        <th style="width: 12%;">单阶段费用 ($)</th>
-                                        <th>状态与输出摘要</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
+<!-- Calibrate Modal -->
+<div class="modal-overlay" id="calibrate-modal">
+    <div class="modal">
+        <div class="modal-head">
+            <span class="modal-title">Expert Calibration (双维度人机校准)</span>
+            <button class="modal-close" onclick="closeModal('calibrate-modal')">&times;</button>
         </div>
-
-        <!-- View 2: Multi-Model Arena Dashboard -->
-        <div id="viewArena" class="main-content" style="display: none; width: 100%;">
-            <div class="header">
-                <div>
-                    <h1>🏆 大模型代码工程质量竞技场 (Multi-Model Arena Leaderboard)</h1>
-                    <p style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">
-                        基于真实标准测试用例集，横向对比各大基模型在「功能准确性、4大工程支柱、沙箱通过率与调用成本」的综合跑分
-                    </p>
+        <div class="modal-body">
+            <div class="grid-2" style="margin-bottom:12px">
+                <div class="form-group">
+                    <label class="form-label">Accuracy 校准 (功能准确性)</label>
+                    <select class="form-select" id="cal-acc-grade" onchange="autoSyncOverallGrade()">
+                        <option value="5">A / G5 (100分 - 卓越)</option>
+                        <option value="4" selected>B / G4 (80分 - 良好)</option>
+                        <option value="3">C / G3 (60分 - 合格)</option>
+                        <option value="2">D / G2 (40分 - 较差)</option>
+                        <option value="1">F / G1 (20分 - 失败)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Quality 校准 (工程质量)</label>
+                    <select class="form-select" id="cal-qua-grade" onchange="autoSyncOverallGrade()">
+                        <option value="5">A / G5 (100分 - 卓越)</option>
+                        <option value="4" selected>B / G4 (80分 - 良好)</option>
+                        <option value="3">C / G3 (60分 - 合格)</option>
+                        <option value="2">D / G2 (40分 - 较差)</option>
+                        <option value="1">F / G1 (20分 - 失败)</option>
+                    </select>
                 </div>
             </div>
-
-            <!-- Arena Leaderboard Table -->
-            <div class="panel">
-                <div class="panel-title">🥇 主流模型工程质量天梯总榜 (Standardized Benchmark Top List)</div>
-                <table class="dim-table" id="arenaTable">
-                    <thead>
-                        <tr>
-                            <th style="width: 6%;">排名</th>
-                            <th style="width: 22%;">模型名称 / 特性标签</th>
-                            <th style="width: 14%;">综合评级 (Grade)</th>
-                            <th style="width: 11%;">沙箱首轮通过率</th>
-                            <th style="width: 11%;">自愈成功率</th>
-                            <th style="width: 11%;">平均单Case成本</th>
-                            <th style="width: 10%;">平均耗时</th>
-                            <th style="width: 15%;">性价比 ROI 指数</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
+            <div class="form-group">
+                <label class="form-label">Overall 最终综合定级 (Final Verdict Grade)</label>
+                <select class="form-select" id="cal-overall-grade">
+                    <option value="5">A / G5 (100分 - 卓越)</option>
+                    <option value="4" selected>B / G4 (80分 - 良好)</option>
+                    <option value="3">C / G3 (60分 - 合格)</option>
+                    <option value="2">D / G2 (40分 - 较差)</option>
+                    <option value="1">F / G1 (20分 - 失败)</option>
+                </select>
             </div>
-
-            <!-- Model Pillar Breakdown Cards -->
-            <div class="panel">
-                <div class="panel-title">📊 四大工程支柱能力详细横向比对 (Pillars Deep Dive)</div>
-                <div id="arenaPillarsGrid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;"></div>
+            <div class="form-group">
+                <label class="form-label">是否认同 AI 判定？</label>
+                <select class="form-select" id="cal-agree">
+                    <option value="true">认同 AI 判定 (Agreed)</option>
+                    <option value="false">存在误判 / 遗漏 / 过于严苛 (Disagreed)</option>
+                </select>
             </div>
-
-            <!-- Enterprise Model Selection Strategy -->
-            <div class="panel" style="background: #0f172a; border-color: var(--accent-blue);">
-                <div class="panel-title" style="color: var(--accent-blue);">💡 企业代码大模型选型与落地决策建议 (Executive Takeaway)</div>
-                <div style="font-size: 13px; color: var(--text-muted); line-height: 1.8;">
-                    • <b>金融高危与关键业务研发</b>：首选 <b>Claude 3.7 Sonnet</b>，其在「架构解耦 (95分)」与「深层死锁自愈 (92%)」上拥有绝对领先的推理深度。<br>
-                    • <b>海量日常 CI/CD 自动化门禁</b>：强烈推荐 <b>DeepSeek-V3</b>，代码质量达到 SOTA 96% 的同时，<b>API 成本大幅下降 95%（降为 1/22）</b>，单次评测仅需 $0.0011，兼顾性能与极致成本！<br>
-                    • <b>物理隔离与内网合规</b>：推荐 <b>Qwen-2.5-Coder (72B)</b>，私有化微调后可直接运行于企业内网算力集群。
-                </div>
+            <div class="form-group">
+                <label class="form-label">专家纠偏归因与复核说明 (将导出沉淀入 DPO 对齐数据集)</label>
+                <textarea class="form-textarea" id="cal-feedback" placeholder="例如：该边界在框架全局拦截器中已兜底，不属于业务缺陷，将 Accuracy 上调为 Grade 4..."></textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">评审专家</label>
+                <input class="form-input" id="cal-reviewer" value="expert_engineer" />
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-ghost" onclick="closeModal('calibrate-modal')">Cancel</button>
+                <button class="btn btn-primary" id="cal-submit" onclick="submitCalibration()">Save Calibration</button>
             </div>
         </div>
     </div>
+</div>
 
-    <script>
-        let currentCaseId = null;
-        let casesData = [];
-        let arenaData = null;
+<!-- Repair Modal -->
+<div class="modal-overlay" id="repair-modal">
+    <div class="modal">
+        <div class="modal-head">
+            <span class="modal-title">Authorize AI Repair</span>
+            <button class="modal-close" onclick="closeModal('repair-modal')">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Human guidance (optional)</label>
+                <textarea class="form-textarea" id="repair-guidance" placeholder="Additional instructions for the repair agent..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-ghost" onclick="closeModal('repair-modal')">Cancel</button>
+                <button class="btn btn-primary" id="repair-submit" onclick="submitRepair()">Execute</button>
+            </div>
+        </div>
+    </div>
+</div>
 
-        const gradeLabels = {
-            5: "Grade 5 : A (卓越)",
-            4: "Grade 4 : B (良好)",
-            3: "Grade 3 : C (合格)",
-            2: "Grade 2 : D (较差)",
-            1: "Grade 1 : F (失败)"
-        };
+<div class="toast" id="toast"></div>
 
-        function getGradeBadge(grade) {
-            if (!grade) return '<span class="grade-badge">N/A</span>';
-            const g = grade;
-            const label = gradeLabels[g] || `Grade ${g}`;
-            return `<span class="grade-badge grade-${g}">${label}</span>`;
-        }
+<script>
+let currentCaseId = null;
+let currentCaseData = null;
+let casesData = [];
 
-        function switchView(viewName) {
-            if (viewName === 'cases') {
-                document.getElementById('viewCaseInspector').style.display = 'flex';
-                document.getElementById('viewArena').style.display = 'none';
-                document.getElementById('btnViewCases').classList.add('active');
-                document.getElementById('btnViewArena').classList.remove('active');
-            } else {
-                document.getElementById('viewCaseInspector').style.display = 'none';
-                document.getElementById('viewArena').style.display = 'block';
-                document.getElementById('btnViewCases').classList.remove('active');
-                document.getElementById('btnViewArena').classList.add('active');
-                renderArenaView();
-            }
-        }
+async function fetchJSON(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.statusText);
+    return res.json();
+}
 
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-pane').forEach(el => el.style.display = 'none');
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            document.getElementById(tabId).style.display = 'block';
-            event.target.classList.add('active');
-        }
+function badge(verdict) {
+    const cls = verdict === 'PASS' ? 'badge-pass' : 'badge-fail';
+    return '<span class="badge ' + cls + '">' + verdict + '</span>';
+}
 
-        async function fetchCases() {
-            try {
-                const res = await fetch('/api/cases');
-                casesData = await res.json();
-                renderSidebar();
-            } catch (e) {
-                console.error("Failed to fetch cases:", e);
-            }
-        }
+function gradeBadge(grade) {
+    if (!grade) return '';
+    const map = { 5: 'A (G5)', 4: 'B (G4)', 3: 'C (G3)', 2: 'D (G2)', 1: 'F (G1)' };
+    const label = map[grade] || ('G' + grade);
+    return '<span class="badge badge-grade">' + label + '</span>';
+}
 
-        async function fetchArena() {
-            try {
-                const res = await fetch('/api/arena');
-                arenaData = await res.json();
-            } catch (e) {
-                console.error("Failed to fetch arena:", e);
-            }
-        }
+function scoreColor(score) {
+    if (score >= 80) return '#22c55e';
+    if (score >= 60) return '#a1a1aa';
+    return '#ef4444';
+}
 
-        function renderArenaView() {
-            if (!arenaData) return;
-            const tb = document.querySelector('#arenaTable tbody');
-            tb.innerHTML = '';
+function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
-            arenaData.models.forEach(m => {
-                const rankClass = m.rank === 1 ? 'arena-rank-1' : (m.rank === 2 ? 'arena-rank-2' : (m.rank === 3 ? 'arena-rank-3' : ''));
-                tb.innerHTML += `<tr>
-                    <td class="${rankClass}">#${m.rank}</td>
-                    <td>
-                        <div style="font-weight: bold; font-size: 14px;">${m.name}</div>
-                        <div style="font-size: 11px; color: var(--accent-blue); margin-top: 2px;">${m.tag}</div>
-                    </td>
-                    <td>
-                        ${getGradeBadge(m.overall_grade)}
-                        <span style="font-size: 13px; color: var(--text-muted); margin-left: 4px;">(${m.overall_score == null ? 'N/A' : m.overall_score}分)</span>
-                    </td>
-                    <td><b style="color: #34d399;">${m.sandbox_pass_rate}</b></td>
-                    <td><b style="color: var(--accent-blue);">${m.healing_success_rate}</b></td>
-                    <td style="font-weight: bold; color: ${m.avg_cost_usd != null && m.avg_cost_usd < 0.005 ? '#34d399' : 'var(--accent-purple)'};">
-                        ${m.avg_cost_usd == null ? 'N/A' : '$' + m.avg_cost_usd.toFixed(4)}
-                    </td>
-                    <td style="color: var(--text-muted); font-size: 12px;">${m.avg_latency}</td>
-                    <td>
-                        <div style="font-weight: bold; color: ${m.roi_index != null && m.roi_index > 90 ? '#34d399' : 'var(--accent-blue)'};">${m.roi_index == null ? 'N/A' : `${m.roi_index} / 100`}</div>
-                        <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: ${m.roi_index == null ? 0 : m.roi_index}%;"></div></div>
-                    </td>
-                </tr>`;
+function showToast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show toast-' + (type || 'success');
+    setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function openModal(id) { document.getElementById(id).classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+// Init: load case list
+async function init() {
+    try {
+        casesData = await fetchJSON('/api/cases');
+        const sel = document.getElementById('case-select');
+        sel.innerHTML = casesData.map(c => '<option value="' + c.case_id + '">' + c.case_id + '</option>').join('');
+        if (casesData.length > 0) loadCase(casesData[0].case_id);
+    } catch(e) {
+        document.getElementById('main-content').innerHTML = '<div class="empty">Error: ' + e.message + '</div>';
+    }
+}
+
+// Load case detail
+async function loadCase(caseId) {
+    if (!caseId) return;
+    currentCaseId = caseId;
+    document.getElementById('case-select').value = caseId;
+    const el = document.getElementById('main-content');
+    el.innerHTML = '<div class="loading"><div class="spinner"></div>Loading ' + caseId + '...</div>';
+    try {
+        const c = await fetchJSON('/api/case/' + caseId);
+        currentCaseData = c;
+        el.innerHTML = renderCase(c);
+    } catch(e) {
+        el.innerHTML = '<div class="empty">Error: ' + e.message + '</div>';
+    }
+}
+
+function renderCase(c) {
+    let html = '';
+
+    // === Top metrics ===
+    const accScore = c.accuracy ? c.accuracy.overall_score : null;
+    const quaScore = c.quality ? c.quality.overall_score : null;
+    const accGrade = c.accuracy ? c.accuracy.overall_grade : null;
+    const quaGrade = c.quality ? c.quality.overall_grade : null;
+    const trace = c.trace || {};
+
+    html += '<div class="grid-4 section-gap">';
+    html += metricCard('Verdict', badge(c.overall_verdict), c.human_review ? ('Review: ' + gradeBadge(c.human_review.calibrated_grade)) : '');
+    html += metricCard('Accuracy', accScore !== null ? accScore.toFixed(0) : 'N/A', accGrade ? gradeBadge(accGrade) : '');
+    html += metricCard('Quality', quaScore !== null ? quaScore.toFixed(0) : 'N/A', quaGrade ? gradeBadge(quaGrade) : '');
+    html += metricCard('Sandbox', c.run ? c.run.status.toUpperCase() : 'N/A', c.run ? c.run.elapsed_seconds.toFixed(1) + 's' : '');
+    html += '</div>';
+
+    // === Accuracy panel ===
+    if (c.accuracy) {
+        html += '<div class="panel"><div class="panel-head">Accuracy Analysis' + (accGrade ? ' &nbsp; ' + gradeBadge(accGrade) : '') + '</div><div class="panel-body">';
+
+        // Dimensions table
+        if (c.accuracy.dimensions && c.accuracy.dimensions.length > 0) {
+            html += '<table class="dim-table"><thead><tr><th>Dimension</th><th>Grade</th><th style="width:50px">Score</th><th>Reason</th></tr></thead><tbody>';
+            c.accuracy.dimensions.forEach(d => {
+                html += '<tr><td><b>' + escapeHtml(d.dimension || d.name || '') + '</b></td>';
+                html += '<td>' + gradeBadge(d.grade) + '</td>';
+                html += '<td>' + (d.score !== undefined ? d.score.toFixed(0) : '-') + '</td>';
+                html += '<td style="color:var(--text-dim)">' + escapeHtml(d.reason || d.comment || '--') + '</td></tr>';
             });
-
-            // Pillars Grid
-            const pg = document.getElementById('arenaPillarsGrid');
-            pg.innerHTML = '';
-            arenaData.models.forEach(m => {
-                pg.innerHTML += `<div class="card" style="border-top: 3px solid ${m.rank === 1 ? '#f59e0b' : (m.rank === 2 ? '#38bdf8' : '#334155')};">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
-                        <span style="font-weight: bold; font-size: 15px;">${m.name}</span>
-                        ${getGradeBadge(m.overall_grade)}
-                    </div>
-                    <div style="font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">🏛️ 架构与规范:</span> <b>${m.pillars.architecture == null ? 'N/A' : m.pillars.architecture + '分'}</b>
-                    </div>
-                    <div style="font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">🛡️ 运行时健壮性:</span> <b>${m.pillars.robustness == null ? 'N/A' : m.pillars.robustness + '分'}</b>
-                    </div>
-                    <div style="font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">⚡ 性能与安全:</span> <b>${m.pillars.security == null ? 'N/A' : m.pillars.security + '分'}</b>
-                    </div>
-                    <div style="font-size: 12px; margin-bottom: 10px; display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">📦 交付可观测:</span> <b>${m.pillars.deliverability == null ? 'N/A' : m.pillars.deliverability + '分'}</b>
-                    </div>
-                    <div style="font-size: 11px; color: var(--text-muted); background: #070d19; padding: 8px; border-radius: 6px; line-height: 1.4;">
-                        ${m.recommendation}
-                    </div>
-                </div>`;
-            });
+            html += '</tbody></table>';
         }
 
-        function renderSidebar() {
-            const listEl = document.getElementById('caseList');
-            listEl.innerHTML = '';
-            
-            if (casesData.length === 0) {
-                listEl.innerHTML = '<div style="color: var(--text-muted); padding: 12px; font-size: 13px;">暂无评测数据，请先运行 eval-sdk 进行评测。</div>';
-                return;
-            }
-
-            casesData.forEach(c => {
-                const item = document.createElement('div');
-                item.className = 'case-item' + (c.case_id === currentCaseId ? ' active' : '');
-                
-                const qGrade = c.quality ? (c.quality.overall_grade || Math.round(c.quality.overall_score / 20)) : null;
-
-                item.innerHTML = `
-                    <div class="case-item-title">
-                        <span>Case: ${c.case_id}</span>
-                        ${getGradeBadge(qGrade)}
-                    </div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px;">
-                        ${c.run ? '沙箱: ' + c.run.status : '未运行'} | ${c.human_review ? '已校准' : '待复核'}
-                    </div>
-                `;
-                item.onclick = () => selectCase(c.case_id);
-                listEl.appendChild(item);
-            });
-
-            if (!currentCaseId && casesData.length > 0) {
-                selectCase(casesData[0].case_id);
-            }
+        // Score bar
+        if (accScore !== null) {
+            html += '<div class="divider"></div>';
+            html += scoreBarRow('Overall Accuracy', accScore);
         }
 
-        function selectCase(caseId) {
-            currentCaseId = caseId;
-            const c = casesData.find(x => x.case_id === caseId);
-            if (!c) return;
+        // Strengths / Weaknesses / Suggestions
+        html += renderTagList('Strengths', c.accuracy.strengths, 'strength');
+        html += renderTagList('Weaknesses', c.accuracy.weaknesses, 'weakness');
+        html += renderTagList('Repair Suggestions', c.accuracy.repair_suggestions, 'suggestion');
 
-            document.getElementById('caseDetails').style.display = 'block';
-            document.getElementById('currentCaseTitle').innerText = `Case: ${c.case_id} 评测与复核详情`;
+        html += '</div></div>';
+    }
 
-            // Top Metrics
-            document.getElementById('metricRun').innerText = c.run ? `${c.run.status.toUpperCase()} (${c.overall_verdict || 'UNKNOWN'})` : 'N/A';
-            document.getElementById('metricRun').style.color = (c.run && c.run.status === 'success') ? 'var(--accent-green)' : 'var(--accent-red)';
+    // === Quality panel ===
+    if (c.quality) {
+        html += '<div class="panel"><div class="panel-head">Engineering Quality' + (quaGrade ? ' &nbsp; ' + gradeBadge(quaGrade) : '') + '</div><div class="panel-body">';
 
-            const accGrade = c.accuracy ? (c.accuracy.overall_grade || Math.round(c.accuracy.overall_score / 20)) : null;
-            const quaGrade = c.quality ? (c.quality.overall_grade || Math.round(c.quality.overall_score / 20)) : null;
-
-            document.getElementById('metricAcc').innerHTML = c.accuracy ? `${getGradeBadge(accGrade)} <span style="font-size: 15px; color: var(--text-muted);">(${c.accuracy.overall_score}分)</span>` : 'N/A';
-            document.getElementById('metricQuality').innerHTML = c.quality ? `${getGradeBadge(quaGrade)} <span style="font-size: 15px; color: var(--text-muted);">(${c.quality.overall_score}分)</span>` : 'N/A';
-
-            if (c.human_review) {
-                const hg = c.human_review.calibrated_grade || 4;
-                document.getElementById('metricReview').innerHTML = `已校准: ${getGradeBadge(hg)}`;
-                document.getElementById('reviewGrade').value = String(hg);
-                document.getElementById('reviewFeedback').value = c.human_review.expert_feedback || '';
-            } else {
-                document.getElementById('metricReview').innerText = '待复核';
-                document.getElementById('metricReview').style.color = 'var(--accent-blue)';
-                document.getElementById('reviewGrade').value = String(quaGrade || 3);
-                document.getElementById('reviewFeedback').value = '';
-            }
-
-            // Tab 1: Functional Accuracy
-            const accTable = document.querySelector('#accuracyDimTable tbody');
-            accTable.innerHTML = '';
-            (c.accuracy && c.accuracy.dimensions ? c.accuracy.dimensions : []).forEach(d => {
-                accTable.innerHTML += `<tr>
-                    <td><b>${d.dimension}</b></td>
-                    <td>${getGradeBadge(d.grade || 4)}</td>
-                    <td style="color: var(--text-muted);">${d.reason || '--'}</td>
-                </tr>`;
+        // Dimensions table
+        if (c.quality.dimensions && c.quality.dimensions.length > 0) {
+            html += '<table class="dim-table"><thead><tr><th>Pillar</th><th>Grade</th><th style="width:50px">Score</th><th>Comment</th></tr></thead><tbody>';
+            c.quality.dimensions.forEach(d => {
+                html += '<tr><td><b>' + escapeHtml(d.name || d.dimension || '') + '</b></td>';
+                html += '<td>' + gradeBadge(d.grade) + '</td>';
+                html += '<td>' + (d.score !== undefined ? d.score.toFixed(0) : '-') + '</td>';
+                html += '<td style="color:var(--text-dim)">' + escapeHtml(d.comment || d.reason || '--') + '</td></tr>';
             });
-
-            renderList('accStrengthsList', c.accuracy ? c.accuracy.strengths : []);
-            renderList('accWeaknessesList', c.accuracy ? c.accuracy.weaknesses : []);
-            renderList('accSuggestionsList', c.accuracy ? c.accuracy.repair_suggestions : []);
-
-            // Tab 2: Engineering Quality
-            const quaTable = document.querySelector('#qualityDimTable tbody');
-            quaTable.innerHTML = '';
-            (c.quality && c.quality.dimensions ? c.quality.dimensions : []).forEach(d => {
-                quaTable.innerHTML += `<tr>
-                    <td><b>${d.name}</b></td>
-                    <td>${getGradeBadge(d.grade || 4)}</td>
-                    <td style="color: var(--text-muted);">${d.comment || '--'}</td>
-                </tr>`;
-            });
-
-            renderList('quaStrengthsList', c.quality ? c.quality.strengths : []);
-            renderList('quaWeaknessesList', c.quality ? c.quality.weaknesses : []);
-            renderList('quaSuggestionsList', c.quality ? c.quality.repair_suggestions : []);
-
-            // Tab 3: Sandbox Terminal
-            document.getElementById('sandboxMeta').innerText = `执行方式: ${c.run ? c.run.run_method : 'N/A'} | 耗时: ${c.run ? c.run.elapsed_seconds : 0}s | 退出码: ${c.run ? c.run.exit_code : 0}`;
-            document.getElementById('sandboxLogBox').innerText = c.run ? (c.run.error_snippet || c.run.log_summary || c.run.note) : '无沙箱执行日志';
-
-            // Tab 4: Combined Suggestions
-            const allSuggs = [
-                ...(c.accuracy && c.accuracy.repair_suggestions ? c.accuracy.repair_suggestions : []),
-                ...(c.quality && c.quality.repair_suggestions ? c.quality.repair_suggestions : [])
-            ];
-            renderList('combinedSuggestionsList', allSuggs.length > 0 ? allSuggs : ['暂无明显缺陷，系统运行良好']);
-
-            // Tab 5: Observability & Trace Waterfall
-            const trace = c.trace;
-            const traceCost = Number((trace && trace.total_cost_usd) || 0);
-            document.getElementById('traceCost').innerText = trace ? `$${traceCost.toFixed(5)} USD` : 'N/A';
-            document.getElementById('traceCostCny').innerText = trace ? `≈ ¥${(traceCost * 7.25).toFixed(4)} RMB` : 'N/A';
-            document.getElementById('traceTokens').innerText = trace ? (trace.total_tokens || 0).toLocaleString() : 'N/A';
-            document.getElementById('traceTokenBreakdown').innerText = trace ? `Prompt: ${trace.total_input_tokens || 0} | Gen: ${trace.total_output_tokens || 0}` : 'N/A';
-            const cacheHit = Number((trace && trace.cache_hit_input_tokens) || 0);
-            const cacheMiss = Number((trace && trace.cache_miss_input_tokens) || 0);
-            const cacheObserved = cacheHit + cacheMiss;
-            const cacheRate = trace && trace.cache_hit_rate != null
-                ? Number(trace.cache_hit_rate) * 100
-                : null;
-            document.getElementById('traceCacheHit').innerText = cacheRate == null ? 'N/A' : `${cacheRate.toFixed(1)}%`;
-            document.getElementById('traceCacheBreakdown').innerText = trace ? `Hit: ${cacheHit.toLocaleString()} | Miss: ${cacheMiss.toLocaleString()} | Observed: ${cacheObserved.toLocaleString()}` : 'N/A';
-            document.getElementById('traceLatency').innerText = trace ? `${trace.total_elapsed_seconds || 0}s` : 'N/A';
-            document.getElementById('traceModel').innerText = (trace && trace.model_name) || 'unknown';
-
-            const traceTable = document.querySelector('#traceWaterfallTable tbody');
-            traceTable.innerHTML = '';
-            const maxElapsed = Math.max(...((trace && trace.spans) || [{elapsed_seconds: 1}]).map(s => s.elapsed_seconds || 1));
-
-            ((trace && trace.spans) || []).forEach(s => {
-                const widthPct = Math.max(8, Math.min(100, (s.elapsed_seconds / maxElapsed) * 100));
-                const spanBadgeColor = s.span_type === 'static' ? '#38bdf8' : (s.span_type === 'sandbox' ? '#f59e0b' : '#c084fc');
-                const statusColor = s.status === 'success' ? '#34d399' : '#f87171';
-
-                traceTable.innerHTML += `<tr>
-                    <td>
-                        <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">
-                            <span style="display:inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${spanBadgeColor};"></span>
-                            ${s.name}
-                        </div>
-                    </td>
-                    <td>
-                        <div style="font-size: 12px; font-weight: bold;">${s.elapsed_seconds}s</div>
-                        <div class="latency-bar-bg"><div class="latency-bar-fill" style="width: ${widthPct}%;"></div></div>
-                    </td>
-                    <td style="font-size: 12px; color: var(--text-muted);">
-                        ${s.total_tokens > 0 ? `<b>${s.total_tokens}</b> (${s.input_tokens} / ${s.output_tokens})<br><span style="font-size:11px;">Cache: ${s.cache_hit_rate == null ? 'N/A' : (Number(s.cache_hit_rate) * 100).toFixed(1) + '%'}</span>` : '<span style="color:#64748b;">0 (本地/沙箱)</span>'}
-                    </td>
-                    <td style="font-size: 12px; font-weight: bold; color: ${s.cost_usd > 0 ? 'var(--accent-purple)' : '#64748b'};">
-                        ${s.cost_usd > 0 ? '$' + s.cost_usd.toFixed(5) : '$0.0000'}
-                    </td>
-                    <td>
-                        <span style="color: ${statusColor}; font-size: 11px; font-weight: bold;">[${s.status.toUpperCase()}]</span>
-                        <span style="font-size: 12px; color: var(--text-muted); margin-left: 4px;">${s.details || ''}</span>
-                    </td>
-                </tr>`;
-            });
-
-            renderSidebar();
+            html += '</tbody></table>';
         }
 
-        function renderList(elemId, items) {
-            const el = document.getElementById(elemId);
-            el.innerHTML = '';
-            if (!items || items.length === 0) {
-                el.innerHTML = '<li>暂无数据</li>';
-                return;
-            }
-            items.forEach(it => {
-                el.innerHTML += `<li>${it}</li>`;
-            });
+        // Score bars
+        if (quaScore !== null) {
+            html += '<div class="divider"></div>';
+            html += scoreBarRow('Overall', quaScore);
         }
 
-        async function submitCalibration() {
-            if (!currentCaseId) return;
-            const gradeVal = parseInt(document.getElementById('reviewGrade').value);
-            const payload = {
-                calibrated_grade: gradeVal,
-                calibrated_score: gradeVal * 20.0,
-                is_agreed_with_ai: document.getElementById('reviewAgree').value === 'true',
-                expert_feedback: document.getElementById('reviewFeedback').value,
-                reviewer: "Expert_Engineer"
-            };
+        html += renderTagList('Strengths', c.quality.strengths, 'strength');
+        html += renderTagList('Weaknesses', c.quality.weaknesses, 'weakness');
+        html += renderTagList('Engineering Suggestions', c.quality.repair_suggestions, 'suggestion');
 
-            const res = await fetch(`/api/case/${currentCaseId}/calibrate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+        html += '</div></div>';
+    }
+
+    // === Sandbox panel ===
+    if (c.run) {
+        html += '<div class="panel"><div class="panel-head">Sandbox Execution</div><div class="panel-body">';
+        html += '<div class="grid-2" style="margin-bottom:12px">';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">Method:</span> ' + escapeHtml(c.run.run_method || 'N/A') + '</div>';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">Elapsed:</span> ' + (c.run.elapsed_seconds || 0).toFixed(1) + 's</div>';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">Exit code:</span> ' + (c.run.exit_code !== undefined ? c.run.exit_code : 'N/A') + '</div>';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">Attempts:</span> ' + (c.run.attempt_count || 1) + '</div>';
+        html += '</div>';
+        if (c.run.log_summary || c.run.error_snippet || c.run.note) {
+            html += '<div class="terminal">' + escapeHtml(c.run.error_snippet || c.run.log_summary || c.run.note) + '</div>';
+        }
+        html += '</div></div>';
+    }
+
+    // === CSV Diff panel ===
+    if (c.diff) {
+        html += '<div class="panel"><div class="panel-head">CSV Diff</div><div class="panel-body">';
+        const ratio = c.diff.matched_ratio !== undefined ? (c.diff.matched_ratio * 100).toFixed(1) : 'N/A';
+        html += '<div style="margin-bottom:8px"><span style="color:var(--text-faint);font-size:12px">Matched:</span> <b>' + ratio + '%</b></div>';
+        html += '<div style="margin-bottom:8px"><span style="color:var(--text-faint);font-size:12px">Status:</span> ' + escapeHtml(c.diff.status || 'N/A') + '</div>';
+        if (c.diff.details) {
+            html += '<pre class="pre-scroll">' + escapeHtml(JSON.stringify(c.diff.details, null, 2)) + '</pre>';
+        }
+        html += '</div></div>';
+    }
+
+    // === Trace & Cost panel ===
+    if (trace && (trace.total_tokens > 0 || trace.total_elapsed_seconds > 0 || (trace.spans && trace.spans.length > 0))) {
+        html += '<div class="panel"><div class="panel-head">Observability &amp; Trace</div><div class="panel-body">';
+
+        // Cost & token metrics
+        html += '<div class="grid-4" style="margin-bottom:12px">';
+        html += metricCard('Cost', trace.total_cost_usd ? '$' + trace.total_cost_usd.toFixed(5) : '$0', trace.total_cost_usd ? (trace.total_cost_usd * 7.25).toFixed(2) + ' RMB' : '');
+        html += metricCard('Tokens', (trace.total_tokens || 0).toLocaleString(), 'In: ' + (trace.total_input_tokens || 0) + ' / Out: ' + (trace.total_output_tokens || 0));
+        const cacheRate = trace.cache_hit_rate != null ? (trace.cache_hit_rate * 100).toFixed(1) + '%' : 'N/A';
+        html += metricCard('Cache Hit', cacheRate, 'Hit: ' + (trace.cache_hit_input_tokens || 0).toLocaleString());
+        html += metricCard('Latency', (trace.total_elapsed_seconds || 0).toFixed(1) + 's', trace.model_name || 'unknown');
+        html += '</div>';
+
+        // Trace waterfall
+        if (trace.spans && trace.spans.length > 0) {
+            const maxElapsed = Math.max(...trace.spans.map(s => s.elapsed_seconds || 0.001), 0.001);
+            html += '<table class="trace-table"><thead><tr><th>Span</th><th>Latency</th><th>Tokens (In/Out)</th><th>Cost</th><th>Status</th></tr></thead><tbody>';
+            trace.spans.forEach(s => {
+                const widthPct = Math.max(5, Math.min(100, ((s.elapsed_seconds || 0) / maxElapsed) * 100));
+                html += '<tr>';
+                html += '<td><b>' + escapeHtml(s.name || '') + '</b></td>';
+                html += '<td><div>' + (s.elapsed_seconds || 0).toFixed(1) + 's</div><div class="latency-bar-bg"><div class="latency-bar-fill" style="width:' + widthPct + '%"></div></div></td>';
+                html += '<td>' + (s.total_tokens > 0 ? s.total_tokens + ' <span style="color:var(--text-faint)">(' + s.input_tokens + '/' + s.output_tokens + ')</span>' : '<span style="color:var(--text-faint)">0</span>') + '</td>';
+                html += '<td>' + (s.cost_usd > 0 ? '$' + s.cost_usd.toFixed(5) : '$0') + '</td>';
+                const sc = s.status === 'success' ? 'var(--pass)' : 'var(--fail)';
+                html += '<td><span style="color:' + sc + ';font-size:11px;font-weight:600">' + escapeHtml((s.status || '').toUpperCase()) + '</span>';
+                if (s.details) html += '<div style="color:var(--text-faint);font-size:11px;margin-top:2px">' + escapeHtml(s.details) + '</div>';
+                html += '</td></tr>';
             });
-            const data = await res.json();
-            alert(`🎉 校准成功！已定级为 ${gradeLabels[gradeVal]}，数据已沉淀入 expert_dataset.jsonl！`);
-            fetchCases();
+            html += '</tbody></table>';
         }
 
-        async function executeRepair() {
-            if (!currentCaseId) return;
-            const guidance = document.getElementById('humanGuidance').value;
-            const res = await fetch(`/api/case/${currentCaseId}/execute-repair`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ authorized: true, human_guidance: guidance })
-            });
-            const data = await res.json();
-            const statusMessage = data.status === 'success'
-                ? 'AI 自愈 Agent 已完成代码修改并通过沙箱复测。'
-                : data.status === 'verification_failed'
-                    ? '补丁已写入，但沙箱复测未通过，请查看验证日志。'
-                    : 'AI 未应用补丁。';
-            alert(`授权处理完成：${statusMessage}\n质量评级：Grade ${data.old_grade ?? 'N/A'} → Grade ${data.new_grade ?? 'N/A'}。`);
-            fetchCases();
-        }
+        html += '</div></div>';
+    }
 
-        // Initialize
-        fetchCases();
-        fetchArena();
-    </script>
+    // === Patch / Repair result ===
+    if (c.patch) {
+        html += '<div class="panel"><div class="panel-head">AI Repair Result</div><div class="panel-body">';
+        html += '<div class="grid-2">';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">Patch applied:</span> ' + (c.patch.patch_applied ? '<span class="badge badge-pass">Yes</span>' : '<span class="badge badge-fail">No</span>') + '</div>';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">Verification:</span> ' + (c.patch.run_after_patch_passed ? '<span class="badge badge-pass">Passed</span>' : '<span class="badge badge-fail">Failed</span>') + '</div>';
+        if (c.patch.score_improved !== undefined) {
+            html += '<div><span style="color:var(--text-faint);font-size:12px">Score:</span> ' + (c.patch.old_score || 0).toFixed(0) + ' -> ' + (c.patch.new_score || 0).toFixed(0) + (c.patch.score_improved ? ' <span class="badge badge-pass">Improved</span>' : '') + '</div>';
+            html += '<div><span style="color:var(--text-faint);font-size:12px">Grade:</span> G' + (c.patch.old_grade || '-') + ' -> G' + (c.patch.new_grade || '-') + '</div>';
+        }
+        html += '</div>';
+        if (c.patch.verification_log) {
+            html += '<div class="terminal" style="margin-top:12px">' + escapeHtml(c.patch.verification_log) + '</div>';
+        }
+        html += '</div></div>';
+    }
+
+    // === HITL Actions ===
+    html += '<div class="panel"><div class="panel-head">Human-in-the-Loop</div><div class="panel-body">';
+
+    // Show existing review
+    if (c.human_review) {
+        const hr = c.human_review;
+        html += '<div style="background:var(--bg-inset);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:14px">';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-bottom:8px">';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">评审专家:</span> <b>' + escapeHtml(hr.reviewer || 'expert') + '</b></div>';
+        if (hr.calibrated_accuracy_grade) {
+            html += '<div><span style="color:var(--text-faint);font-size:12px">Accuracy:</span> ' + gradeBadge(hr.calibrated_accuracy_grade) + '</div>';
+        }
+        if (hr.calibrated_quality_grade) {
+            html += '<div><span style="color:var(--text-faint);font-size:12px">Quality:</span> ' + gradeBadge(hr.calibrated_quality_grade) + '</div>';
+        }
+        html += '<div><span style="color:var(--text-faint);font-size:12px">最终裁决:</span> ' + gradeBadge(hr.calibrated_grade) + '</div>';
+        html += '<div><span style="color:var(--text-faint);font-size:12px">认同AI:</span> ' + (hr.is_agreed_with_ai ? '<span class="badge badge-pass">Agreed</span>' : '<span class="badge badge-fail">Disagreed</span>') + '</div>';
+        html += '</div>';
+        if (hr.expert_feedback) {
+            html += '<div style="font-size:12px;color:var(--text-dim);line-height:1.5;border-top:1px solid var(--border);padding-top:8px"><span style="color:var(--text-faint)">专家说明:</span> ' + escapeHtml(hr.expert_feedback) + '</div>';
+        }
+        html += '</div>';
+    }
+
+    // Combined repair suggestions
+    const allSuggs = [
+        ...(c.accuracy && c.accuracy.repair_suggestions ? c.accuracy.repair_suggestions : []),
+        ...(c.quality && c.quality.repair_suggestions ? c.quality.repair_suggestions : [])
+    ];
+    if (allSuggs.length > 0) {
+        html += '<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--text-faint);margin-bottom:6px">AI Proposed Repair Strategy:</div>';
+        html += '<ul class="tag-list suggestion">';
+        allSuggs.forEach(s => { html += '<li>' + escapeHtml(s) + '</li>'; });
+        html += '</ul></div>';
+    }
+
+    html += '<div class="form-actions">';
+    html += '<button class="btn btn-ghost" onclick="openCalibrateModal()">Calibrate (人机校准)</button>';
+    html += '<button class="btn btn-primary" onclick="openModal(\'repair-modal\')">Authorize Repair (授权自愈)</button>';
+    html += '</div>';
+    html += '</div></div>';
+
+    return html;
+}
+
+function metricCard(label, value, sub) {
+    return '<div class="metric-card"><div class="metric-label">' + label + '</div><div class="metric-value">' + value + '</div>' + (sub ? '<div class="metric-sub">' + sub + '</div>' : '') + '</div>';
+}
+
+function scoreBarRow(label, score) {
+    return '<div class="score-row"><span class="score-label">' + label + '</span>'
+        + '<div class="score-bar"><div class="score-fill" style="width:' + score + '%;background:' + scoreColor(score) + '"></div></div>'
+        + '<span class="score-val">' + score.toFixed(0) + '</span></div>';
+}
+
+function renderTagList(title, items, cls) {
+    if (!items || items.length === 0) return '';
+    let html = '<div style="margin-top:12px"><div style="font-size:12px;color:var(--text-faint);margin-bottom:6px">' + title + '</div>';
+    html += '<ul class="tag-list ' + cls + '">';
+    items.forEach(it => { html += '<li>' + escapeHtml(it) + '</li>'; });
+    html += '</ul></div>';
+    return html;
+}
+
+function autoSyncOverallGrade() {
+    const acc = parseInt(document.getElementById('cal-acc-grade').value) || 4;
+    const qua = parseInt(document.getElementById('cal-qua-grade').value) || 4;
+    document.getElementById('cal-overall-grade').value = String(Math.min(acc, qua));
+}
+
+function openCalibrateModal() {
+    if (!currentCaseData) return;
+    const c = currentCaseData;
+    const accGrade = c.accuracy ? (c.accuracy.overall_grade || 4) : 4;
+    const quaGrade = c.quality ? (c.quality.overall_grade || 4) : 4;
+    if (c.human_review) {
+        document.getElementById('cal-acc-grade').value = String(c.human_review.calibrated_accuracy_grade || accGrade);
+        document.getElementById('cal-qua-grade').value = String(c.human_review.calibrated_quality_grade || quaGrade);
+        document.getElementById('cal-overall-grade').value = String(c.human_review.calibrated_grade || Math.min(accGrade, quaGrade));
+        document.getElementById('cal-agree').value = c.human_review.is_agreed_with_ai ? 'true' : 'false';
+        document.getElementById('cal-feedback').value = c.human_review.expert_feedback || '';
+        document.getElementById('cal-reviewer').value = c.human_review.reviewer || 'expert_engineer';
+    } else {
+        document.getElementById('cal-acc-grade').value = String(accGrade);
+        document.getElementById('cal-qua-grade').value = String(quaGrade);
+        document.getElementById('cal-overall-grade').value = String(Math.min(accGrade, quaGrade));
+        document.getElementById('cal-agree').value = 'true';
+        document.getElementById('cal-feedback').value = '';
+        document.getElementById('cal-reviewer').value = 'expert_engineer';
+    }
+    openModal('calibrate-modal');
+}
+
+// Submit calibration
+async function submitCalibration() {
+    const btn = document.getElementById('cal-submit');
+    btn.disabled = true;
+    try {
+        const accGrade = parseInt(document.getElementById('cal-acc-grade').value);
+        const quaGrade = parseInt(document.getElementById('cal-qua-grade').value);
+        const overallGrade = parseInt(document.getElementById('cal-overall-grade').value);
+        const agree = document.getElementById('cal-agree').value === 'true';
+        const feedback = document.getElementById('cal-feedback').value;
+        const reviewer = document.getElementById('cal-reviewer').value;
+        const res = await fetch('/api/case/' + currentCaseId + '/calibrate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                calibrated_accuracy_grade: accGrade,
+                calibrated_quality_grade: quaGrade,
+                calibrated_grade: overallGrade,
+                is_agreed_with_ai: agree,
+                expert_feedback: feedback,
+                reviewer: reviewer
+            })
+        });
+        const result = await res.json();
+        if (res.ok) { showToast('Calibration saved', 'success'); closeModal('calibrate-modal'); loadCase(currentCaseId); }
+        else { showToast(result.detail || 'Error', 'error'); }
+    } catch(e) { showToast(e.message, 'error'); }
+    btn.disabled = false;
+}
+
+// Submit repair
+async function submitRepair() {
+    const btn = document.getElementById('repair-submit');
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    try {
+        const guidance = document.getElementById('repair-guidance').value;
+        const res = await fetch('/api/case/' + currentCaseId + '/execute-repair', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({authorized: true, human_guidance: guidance})
+        });
+        const result = await res.json();
+        if (res.ok) { showToast('Repair: ' + result.status, 'success'); closeModal('repair-modal'); loadCase(currentCaseId); }
+        else { showToast(result.detail || 'Error', 'error'); }
+    } catch(e) { showToast(e.message, 'error'); }
+    btn.disabled = false;
+    btn.textContent = 'Execute';
+}
+
+// Init
+init();
+</script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
